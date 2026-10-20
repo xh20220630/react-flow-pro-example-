@@ -1,0 +1,58 @@
+.rf-pro-example[data-example='dynamic-layouting'] {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.rf-pro-example[data-example='dynamic-layouting'],
+.rf-pro-example[data-example='dynamic-layouting'],
+.rf-pro-example[data-example='dynamic-layouting'] {
+  height: 100%;
+  margin: 0;
+}
+.rf-pro-example[data-example='dynamic-layouting'] .react-flow__handle {
+  visibility: hidden;
+}
+.rf-pro-example[data-example='dynamic-layouting'] .react-flow__node {
+  width: 160px;
+  height: 40px;
+  padding: 0;
+}
+.rf-pro-example[data-example='dynamic-layouting'] .react-flow__node-placeholder {
+  color: #bbb;
+  border: 1px dashed #bbb;
+}
+.rf-pro-example[data-example='dynamic-layouting'] .react-flow__node-placeholder:hover {
+  color: #bbb;
+  border: 1px dashed #bbb;
+  box-shadow: 1px 2px 4px #0000001a;
+}
+.rf-pro-example[data-example='dynamic-layouting'] .react-flow__node > div {
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  display: flex;
+}
+.rf-pro-example[data-example='dynamic-layouting'] .react-flow__edge-placeholder {
+  stroke-dasharray: 3 3;
+  stroke: #bbb;
+  pointer-events: none;
+}
+.rf-pro-example[data-example='dynamic-layouting'] .edge-button {
+  pointer-events: all;
+  cursor: pointer;
+  color: #777;
+  background: #fff;
+  border: 1px solid #eee;
+  border-radius: 4px;
+  position: absolute;
+}
+.rf-pro-example[data-example='dynamic-layouting'] .edge-button:hover {
+  box-shadow: 1px 2px 4px #0000001a;
+}
+@media (prefers-color-scheme: dark) {
+  .rf-pro-example[data-example='dynamic-layouting'],
+  .rf-pro-example[data-example='dynamic-layouting'] {
+    background-color: #101012;
+  }
+}

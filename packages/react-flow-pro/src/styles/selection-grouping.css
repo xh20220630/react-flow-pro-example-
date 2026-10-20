@@ -1,0 +1,17 @@
+.rf-pro-example[data-example='selection-grouping'] {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.rf-pro-example[data-example='selection-grouping'],
+.rf-pro-example[data-example='selection-grouping'],
+.rf-pro-example[data-example='selection-grouping'] {
+  height: 100%;
+  margin: 0;
+}
+@media (prefers-color-scheme: dark) {
+  .rf-pro-example[data-example='selection-grouping'],
+  .rf-pro-example[data-example='selection-grouping'] {
+    background-color: #101012;
+  }
+}

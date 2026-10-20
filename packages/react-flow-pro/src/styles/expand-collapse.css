@@ -1,0 +1,40 @@
+.rf-pro-example[data-example='expand-collapse'] {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.rf-pro-example[data-example='expand-collapse'],
+.rf-pro-example[data-example='expand-collapse'],
+.rf-pro-example[data-example='expand-collapse'] {
+  height: 100%;
+  margin: 0;
+}
+.rf-pro-example[data-example='expand-collapse'] .react-flow__node {
+  width: 120px;
+}
+.rf-pro-example[data-example='expand-collapse'] .react-flow__handle {
+  visibility: hidden;
+}
+.rf-pro-example[data-example='expand-collapse'] .react-flow__node button {
+  text-align: center;
+  width: 90px;
+  color: var(--xy-edge-label-color-default);
+  background-color: color-mix(in srgb, var(--color-hover-bg) 55%, transparent);
+  cursor: pointer;
+  border: none;
+  border-radius: 6px;
+  font-size: 9px;
+  position: absolute;
+  bottom: -20px;
+  left: 50%;
+  transform: translate(-50%);
+}
+.rf-pro-example[data-example='expand-collapse'] .react-flow__node button:hover {
+  color: var(--xy-theme-edge-hover);
+}
+@media (prefers-color-scheme: dark) {
+  .rf-pro-example[data-example='expand-collapse'],
+  .rf-pro-example[data-example='expand-collapse'] {
+    background-color: #101012;
+  }
+}

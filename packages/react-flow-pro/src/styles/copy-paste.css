@@ -1,0 +1,17 @@
+.rf-pro-example[data-example='copy-paste'] {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.rf-pro-example[data-example='copy-paste'],
+.rf-pro-example[data-example='copy-paste'],
+.rf-pro-example[data-example='copy-paste'] {
+  height: 100%;
+  margin: 0;
+}
+@media (prefers-color-scheme: dark) {
+  .rf-pro-example[data-example='copy-paste'],
+  .rf-pro-example[data-example='copy-paste'] {
+    background-color: #101012;
+  }
+}

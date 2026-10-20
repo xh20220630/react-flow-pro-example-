@@ -1,0 +1,25 @@
+# 独立项目迁移说明
+
+## 迁移前后
+
+原实现运行在 dlab 的 `src/new_web` Vite workspace 中，页面依赖该工作区的应用入口与全局主题。功能主体已经独立维护在 `packages/react-flow-pro`。
+
+现将完整功能包和示例工作台复制到本仓库，应用入口改为 Next.js App Router + TypeScript，包名改为 `@react-flow-pro-example/core`。本仓库拥有独立 Git 历史、远程地址、依赖清单、锁文件与基础主题，无需读取原项目文件。迁移没有删除或修改原仓库实现。
+
+## 包含内容
+
+- 全部 15 个示例的可读源码、类型声明、初始图数据和样式。
+- 统一 Canvas、独立示例组件、目录与操作提示。
+- Yjs BroadcastChannel provider、Leva 参数面板、几何函数、ID 和剪贴板工具。
+- 搜索、分类导航、hash 深链接、重置和响应式页面。
+- 功能包独立构建、声明输出、ESM / CSS 打包配置，以及架构和功能原理文档。
+
+原应用中的设备业务、editor 最小 demo、UI/domain 包、设计稿、历史捕获脚本、vendor 资源、REA 参考归档和已生成的旧安装包不属于这些功能的运行依赖，未迁入。本仓库从 npm 安装算法依赖及配套 WASM。
+
+## 适配点
+
+1. 浏览器工作台通过 Client Component 的 `next/dynamic` 入口加载，不在服务端初始化图状态或访问 DOM。
+2. 移除 `?inline` 样式导入，改为统一 CSS 入口，保留每个示例已有的作用域选择器。
+3. 保留每个示例的懒加载入口和实例工厂，切换或重置时重新挂载画布。
+4. 去除 dlab 包名、全局主题和本地路径依赖；协作房间使用本仓库自己的 BroadcastChannel 命名空间。
+5. 保留可读 JSX 及声明文件，TypeScript 严格检查应用与现有 TS 模块，后续可逐个示例补充具体类型。

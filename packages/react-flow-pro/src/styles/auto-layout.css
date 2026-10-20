@@ -1,0 +1,15 @@
+.rf-pro-example[data-example='auto-layout'] {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+}
+.rf-pro-example[data-example='auto-layout'],
+.rf-pro-example[data-example='auto-layout'],
+.rf-pro-example[data-example='auto-layout'] {
+  height: 100%;
+  margin: 0;
+}
+@media (prefers-color-scheme: dark) {
+  .rf-pro-example[data-example='auto-layout'],
+  .rf-pro-example[data-example='auto-layout'] {
+    background-color: #101012;
+  }
+}

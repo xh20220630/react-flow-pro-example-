@@ -1,0 +1,8 @@
+node_modules
+.next
+dist
+out
+artifacts
+pnpm-lock.yaml
+*.tsbuildinfo
+next-env.d.ts
