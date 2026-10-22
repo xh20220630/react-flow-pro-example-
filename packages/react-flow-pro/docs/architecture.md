@@ -18,15 +18,19 @@
 
 基础样式通过 `@xyflow/react/dist/style.css` 引入。统一入口 `src/styles/index.css` 引入基础样式、共享主题和所有功能样式，使用已有的示例作用域隔离；没有另一份捕获版 React Flow 基础样式。宿主 reset 使用零 specificity，保持官方 `.react-flow` 规则的优先级。
 
-`edge-routing.jsx` 从安装的 `libavoid-js` 包定位 WASM，应用构建工具输出静态资源并生成部署地址；独立功能包使用 Vite 构建。该文件是算法包的二进制资源，与 JS glue 版本配对；不在本包中复制 JS glue，也不要求调用方访问示例网站下载资源。
+`edge-routing.tsx` 从安装的 `libavoid-js` 包定位 WASM，应用构建工具输出静态资源并生成部署地址；独立功能包使用 Vite 构建。该文件是算法包的二进制资源，与 JS glue 版本配对；不在本包中复制 JS glue，也不要求调用方访问示例网站下载资源。
 
 ## 参数与协作
 
 参数面板使用 Leva 的 `useCreateStore`、`useControls` 与 `LevaPanel` 公共导出。`LayoutControlsProvider` 每次挂载创建独立 store，三个布局功能通过同一 Context 注册和显示参数，不再导出或调用库内部构造器。
 
-本地协作由 `src/collaboration/local-provider.ts` 实现：新标签页广播状态向量，现有标签页回复缺失的 Yjs 状态，随后广播增量 update；远端应用使用当前 provider 作为 origin，避免再次广播形成回环。空房间等待发现窗口后允许初始化。卸载取消计时器、解除文档监听、关闭 BroadcastChannel 并销毁文档。
+协作通过 `src/collaboration/websocket-provider.ts` 创建官方 `WebsocketProvider`，连接当前域名的 `/collaboration/<房间 ID>`。禁用 BroadcastChannel 后，同浏览器标签页、独立浏览器和跨设备使用完全相同的网络同步路径。收到服务端 `sync` 回复后才进入房间；首次失败或超时显示错误并释放会话，已加入房间的连接断开后由 Provider 自动重连并合并本地修改。
 
-协作范围是同一浏览器环境、同源标签页或窗口。远端 WebSocket、跨设备服务器和服务端图片生成未纳入当前本地实现。
+宿主 `src/server/index.ts` 使用 Node 24 运行 TypeScript 自定义服务器，HTTP 页面仍由 Next.js App Router 处理，`src/server/collaboration.ts` 将 WebSocket Upgrade 交给官方 `@y/websocket-server/utils`。开发热更新的 Upgrade 继续由 Next.js 自身处理。客户端不需要访问其他端口或第三方服务器。
+
+服务器按房间创建 Y.Doc，并在同步客户端前一次性生成初始节点；客户端加入不写入初始化数据。节点与边使用 Yjs Maps，测量和选中状态由本机投影缓存保存，在线身份、光标和连接草稿使用 Awareness。退出或异常断线移除该连接的在线状态，不把临时光标保存在图文档中。
+
+房间文档保留在服务进程内存，所有人退出、刷新或重新加入仍能获取相同状态；服务重启后清空。当前示例没有数据库持久化或登录权限系统。部署反向代理需转发 `/collaboration/*` 的 WebSocket Upgrade。服务端图片生成仍不在本项目范围内。
 
 ## 维护边界
 

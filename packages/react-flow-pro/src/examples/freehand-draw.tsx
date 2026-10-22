@@ -1,5 +1,9 @@
+/**
+ * 自由绘制：采集屏幕笔迹，转换为画布节点，在缩放节点时按比例重建 SVG 轮廓。
+ * 每个画布实例通过 createExampleScope 创建独立作用域，避免缓存、store 和可变初始数据跨实例共享。
+ */
 import * as React from 'react'
-import { createDemoId } from '../runtime/create-id.js'
+import { createDemoId } from '../runtime/create-id'
 import {
   Position,
   useEdgesState,
@@ -13,42 +17,57 @@ import {
   addEdge,
 } from '@xyflow/react'
 import { getStroke } from 'perfect-freehand'
+import type { Connection, Edge, Node, NodeProps, ReactFlowInstance } from '@xyflow/react'
+
+/** 采样点的第三个分量是压力；用元组避免把 x、y 和压力当作任意长度数组。 */
+type StrokePoint = [x: number, y: number, pressure: number]
+type FreehandGraphNode = Node<{ label: string }> | StrokeNode
+type StrokeNode = Node<
+  { points: StrokePoint[]; initialSize: { width: number; height: number } },
+  'freehand'
+>
+
+/** 创建本示例的组件、算法和局部状态；根组件惰性初始化后在本次挂载中复用。 */
 function createExampleScope() {
   const freehandStrokeOptions = {
     size: 7,
     thinning: 0.5,
     smoothing: 0.5,
     streamline: 0.5,
-    easing: (progress) => progress,
+    easing: (progress: number) => progress,
     start: {
       taper: 0,
-      easing: (progress) => progress,
+      easing: (progress: number) => progress,
       cap: true,
     },
     end: {
       taper: 0.1,
-      easing: (progress) => progress,
+      easing: (progress: number) => progress,
       cap: true,
     },
   }
-  /* 用轮廓顶点和相邻点中点构造平滑的闭合二次贝塞尔路径，最后追加 Z 填充笔迹。 */
-  function strokeOutlineToSvgPath(outlinePoints) {
+  /**
+   * 将 perfect-freehand 输出的轮廓转换为可填充的 SVG 闭合路径。
+   * 使用每个轮廓点作为二次贝塞尔控制点，相邻点中点作为曲线端点，平滑连接轮廓。
+   * 空轮廓返回空路径；末尾追加 Z 闭合，节点和绘画预览复用这套转换。
+   */
+  function strokeOutlineToSvgPath(outlinePoints: number[][]) {
     if (!outlinePoints.length) {
       return ''
     }
     const pathTokens = outlinePoints.reduce(
-      (tokens, [x, y], pointIndex, points) => {
-        const [nextX, nextY] = points[(pointIndex + 1) % points.length]
+      (tokens, [x = 0, y = 0], pointIndex, points) => {
+        const [nextX = 0, nextY = 0] = points[(pointIndex + 1) % points.length]!
         tokens.push(x, y, ',', (x + nextX) / 2, (y + nextY) / 2)
         return tokens
       },
-      ['M', ...outlinePoints[0], 'Q'],
+      ['M', ...outlinePoints[0]!, 'Q'] as (string | number)[],
     )
     pathTokens.push('Z')
     return pathTokens.join(' ')
   }
   /* perfect-freehand 根据采样坐标及压力生成笔迹轮廓；预览时按视口缩放补偿笔宽。 */
-  function freehandStrokePath(points, strokeScale = 1) {
+  function freehandStrokePath(points: StrokePoint[], strokeScale = 1) {
     return strokeOutlineToSvgPath(
       getStroke(points, {
         ...freehandStrokeOptions,
@@ -56,12 +75,17 @@ function createExampleScope() {
       }),
     )
   }
-  /* 始终保留初始采样点，按节点当前尺寸分别缩放横纵坐标，缩放节点时重算笔迹而不丢失压力。 */
-  function FreehandNode({ data, width, height, selected, dragging }) {
+  /**
+   * data.points 始终保存创建笔迹时的局部坐标和压力，避免多次缩放累积误差。
+   * 节点当前宽高分别除以 initialSize，得到 x/y 缩放比例，再重建轮廓。
+   * 选中且未拖动时显示缩放控制器，SVG 的可交互区域限制为已绘制的笔迹。
+   */
+  function FreehandNode({ data, width, height, selected, dragging }: NodeProps<StrokeNode>) {
     const scaleX = (width ?? 1) / data.initialSize.width
     const scaleY = (height ?? 1) / data.initialSize.height
     const scaledPoints = React.useMemo(
-      () => data.points.map((point) => [point[0] * scaleX, point[1] * scaleY, point[2]]),
+      () =>
+        data.points.map((point): StrokePoint => [point[0] * scaleX, point[1] * scaleY, point[2]]),
       [data.points, scaleX, scaleY],
     )
     return (
@@ -85,13 +109,21 @@ function createExampleScope() {
       </React.Fragment>
     )
   }
-  /* 把屏幕采样点转成画布坐标，计算并扩展包围盒，再将点转换为节点内部的局部坐标。 */
-  function freehandNodeFromScreenPoints(screenPoints, screenToFlowPosition) {
+  /**
+   * 把浏览器采样转换为独立 React Flow 节点所需的数据，但不在这里生成节点 ID。
+   * 先逐点执行 screenToFlowPosition，求出画布坐标包围盒，再按半个笔宽外扩。
+   * 所有采样减去包围盒原点，转成节点内部坐标；压力分量原样保留。
+   * 返回 position、width、height、points 和 initialSize，由调用方补齐节点类型与 ID。
+   */
+  function freehandNodeFromScreenPoints(
+    screenPoints: StrokePoint[],
+    screenToFlowPosition: ReactFlowInstance['screenToFlowPosition'],
+  ) {
     let minX = Infinity
     let minY = Infinity
     let maxX = -Infinity
     let maxY = -Infinity
-    const localPoints = []
+    const localPoints: StrokePoint[] = []
     for (const screenPoint of screenPoints) {
       const { x: flowX, y: flowY } = screenToFlowPosition({
         x: screenPoint[0],
@@ -130,25 +162,31 @@ function createExampleScope() {
       },
     }
   }
-  /* 采样使用浏览器 client 坐标；预览换成覆盖层局部坐标，提交时通过官方 API 换成画布坐标。 */
+  /**
+   * 绘画覆盖层只接管当前激活指针，采样的 clientX/clientY 属于屏幕坐标系。
+   * 按下后捕获 pointerId，移动追加坐标与压力；预览减去覆盖层 DOM 边界得到局部坐标。
+   * 正常抬起时提交整条笔迹；pointercancel 仅清空缓存，避免生成不完整节点。
+   * 提交通过官方 screenToFlowPosition 转入画布，视口平移和缩放不会改变笔迹落点。
+   * 采样放在 ref 中，预览单独放 state，仅在需要绘制 SVG 时触发渲染。
+   */
   function FreehandDrawingOverlay() {
-    const { screenToFlowPosition, getViewport, setNodes } = useReactFlow()
-    const pointsRef = React.useRef([])
-    const activePointerRef = React.useRef(null)
-    const [previewPoints, setPreviewPoints] = React.useState([])
+    const { screenToFlowPosition, getViewport, setNodes } = useReactFlow<FreehandGraphNode, Edge>()
+    const pointsRef = React.useRef<StrokePoint[]>([])
+    const activePointerRef = React.useRef<number | null>(null)
+    const [previewPoints, setPreviewPoints] = React.useState<StrokePoint[]>([])
 
-    function samplePoint(event) {
+    function samplePoint(event: React.PointerEvent): StrokePoint {
       return [event.clientX, event.clientY, event.pressure]
     }
 
-    function updatePreview(element) {
+    function updatePreview(element: HTMLDivElement) {
       const bounds = element.getBoundingClientRect()
       setPreviewPoints(
         pointsRef.current.map(([x, y, pressure]) => [x - bounds.left, y - bounds.top, pressure]),
       )
     }
 
-    function onPointerDown(event) {
+    function onPointerDown(event: React.PointerEvent<HTMLDivElement>) {
       if (event.button !== 0 || activePointerRef.current !== null) return
       activePointerRef.current = event.pointerId
       event.currentTarget.setPointerCapture(event.pointerId)
@@ -156,20 +194,20 @@ function createExampleScope() {
       updatePreview(event.currentTarget)
     }
 
-    function onPointerMove(event) {
+    function onPointerMove(event: React.PointerEvent<HTMLDivElement>) {
       if (activePointerRef.current !== event.pointerId) return
       pointsRef.current.push(samplePoint(event))
       updatePreview(event.currentTarget)
     }
 
-    function finishStroke(event, commit) {
+    function finishStroke(event: React.PointerEvent<HTMLDivElement>, commit: boolean) {
       if (activePointerRef.current !== event.pointerId) return
       activePointerRef.current = null
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId)
       }
       if (commit && pointsRef.current.length) {
-        const freehandNode = {
+        const freehandNode: StrokeNode = {
           id: createDemoId(),
           type: 'freehand',
           ...freehandNodeFromScreenPoints(pointsRef.current, screenToFlowPosition),
@@ -194,14 +232,14 @@ function createExampleScope() {
       </div>
     )
   }
-  const initialFreehandEdges = [
+  const initialFreehandEdges: Edge[] = [
     {
       id: 'e1-2',
       source: '1',
       target: '2',
     },
   ]
-  const initialFreehandNodes = [
+  const initialFreehandNodes: FreehandGraphNode[] = [
     {
       id: '1',
       type: 'input',
@@ -383,7 +421,7 @@ function createExampleScope() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={React.useCallback(
-          (connection) => setEdges((edges) => addEdge(connection, edges)),
+          (connection: Connection) => setEdges((edges) => addEdge(connection, edges)),
           [setEdges],
         )}
         nodeTypes={freehandNodeTypes}
@@ -426,6 +464,7 @@ function createExampleScope() {
   }
 }
 function FreehandDrawCanvas() {
+  // 惰性保存组件类型，使普通重渲染沿用同一份图状态；工作台重置时重新挂载。
   const [Example] = React.useState(createExampleScope)
   return <Example />
 }

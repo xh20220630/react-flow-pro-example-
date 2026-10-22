@@ -45,31 +45,31 @@ export function Example() {
 
 ## 功能入口
 
-| ID                        | 导出组件                       | 功能                                   |
-| ------------------------- | ------------------------------ | -------------------------------------- |
-| `node-position-animation` | `NodePositionAnimationExample` | 节点位置动画与布局切换                 |
-| `shapes`                  | `ShapesExample`                | 图形拖入、文字、颜色、尺寸和连接       |
-| `edge-routing`            | `EdgeRoutingExample`           | 正交避障、端口方向与障碍物移动         |
-| `editable-edge`           | `EditableEdgeExample`          | 曲线、折线控制点编辑与绘制连接         |
-| `helper-lines`            | `HelperLinesExample`           | 拖动、缩放辅助线与吸附                 |
-| `collaborative`           | `CollaborativeExample`         | 同源标签页中的图、表单、光标与连接同步 |
-| `copy-paste`              | `CopyPasteExample`             | 复制、剪切、粘贴与快捷键               |
-| `undo-redo`               | `UndoRedoExample`              | 图快照历史、撤销与重做                 |
-| `selection-grouping`      | `SelectionGroupingExample`     | 多选分组、组尺寸与解组                 |
-| `parent-child-relation`   | `ParentChildRelationExample`   | 拖入父节点、相对坐标与脱离             |
-| `expand-collapse`         | `ExpandCollapseExample`        | 树节点展开、折叠与添加子节点           |
-| `auto-layout`             | `AutoLayoutExample`            | Dagre、D3 Hierarchy、ELK 与四方向布局  |
-| `force-layout`            | `ForceLayoutExample`           | 力模拟、拖动固定、新节点与连接         |
-| `dynamic-layouting`       | `DynamicLayoutingExample`      | 占位节点转换、分支与边中插入           |
-| `freehand-draw`           | `FreehandDrawExample`          | 自由绘制、选择、移动和缩放             |
+| ID                        | 导出组件                       | 功能                                    |
+| ------------------------- | ------------------------------ | --------------------------------------- |
+| `node-position-animation` | `NodePositionAnimationExample` | 节点位置动画与布局切换                  |
+| `shapes`                  | `ShapesExample`                | 图形拖入、文字、颜色、尺寸和连接        |
+| `edge-routing`            | `EdgeRoutingExample`           | 正交避障、端口方向与障碍物移动          |
+| `editable-edge`           | `EditableEdgeExample`          | 曲线、折线控制点编辑与绘制连接          |
+| `helper-lines`            | `HelperLinesExample`           | 拖动、缩放辅助线与吸附                  |
+| `collaborative`           | `CollaborativeExample`         | 跨浏览器/设备的图、表单、光标与连接同步 |
+| `copy-paste`              | `CopyPasteExample`             | 复制、剪切、粘贴与快捷键                |
+| `undo-redo`               | `UndoRedoExample`              | 图快照历史、撤销与重做                  |
+| `selection-grouping`      | `SelectionGroupingExample`     | 多选分组、组尺寸与解组                  |
+| `parent-child-relation`   | `ParentChildRelationExample`   | 拖入父节点、相对坐标与脱离              |
+| `expand-collapse`         | `ExpandCollapseExample`        | 树节点展开、折叠与添加子节点            |
+| `auto-layout`             | `AutoLayoutExample`            | Dagre、D3 Hierarchy、ELK 与四方向布局   |
+| `force-layout`            | `ForceLayoutExample`           | 力模拟、拖动固定、新节点与连接          |
+| `dynamic-layouting`       | `DynamicLayoutingExample`      | 占位节点转换、分支与边中插入            |
+| `freehand-draw`           | `FreehandDrawExample`          | 自由绘制、选择、移动和缩放              |
 
-服务端图片生成和远程协作服务器不包含在本项目中。协作使用本地 `BroadcastChannel`，不创建 WebSocket 连接。
+协作使用与官方示例相同的 `yjs` 和 `y-websocket` 客户端。默认连接当前页面域名下的 `/collaboration/<房间 ID>`，宿主需提供兼容的 Yjs WebSocket 服务；本仓库的 `src/server` 已自带同端口服务，由 `pnpm dev`/`pnpm start` 一起启动。初始房间数据由该服务端创建，客户端收到同步回复后才显示画布。图数据位于 Y.Doc，光标、在线用户与连接草稿位于 Awareness。服务端图片生成仍不包含在本项目中。
 
 ## 源码与依赖
 
 ```text
 src/examples/       15 个功能的组件、hooks、算法组织和初始数据
-src/collaboration/ 可读的 Yjs 本地传输
+src/collaboration/ y-websocket 连接、首次同步和会话资源清理
 src/controls/      基于 Leva 公共 API 的独立参数面板
 src/lib/           基于官方 React Flow API 的几何辅助函数
 src/runtime/       兼容 HTTP 环境的 ID 与剪贴板工具
@@ -78,7 +78,7 @@ src/styles/        共享主题与各功能样式
 
 示例直接使用 `import { ReactFlow, useReactFlow } from '@xyflow/react'`。D3、Dagre、ELK、Leva、Yjs、Zustand、perfect-freehand、perfect-cursors、lucide-react、libavoid-js 都通过正常 npm 包名导入。构建将这些依赖保留为外部依赖，由项目安装和解析；libavoid 的 WASM 文件从安装的 npm 包交给构建工具输出为静态资源。
 
-直接编辑对应的 JSX、TS 或 CSS 文件即可，不需要修改位置映射、运行恢复脚本或维护压缩符号。入口仍用实例工厂隔离可变状态，避免不同画布共享 store、缓存或布局参数。
+直接编辑对应的 TSX、TS 或 CSS 文件即可，不需要修改位置映射、运行恢复脚本或维护压缩符号。入口仍用实例工厂隔离可变状态，避免不同画布共享 store、缓存或布局参数。
 
 阅读顺序与维护方法见 [源码指南](./docs/readable-source.md)；各功能的数据流和公式说明见 [功能原理](./docs/pro-features.md)；共享官方依赖的约定见 [架构](./docs/architecture.md)。
 

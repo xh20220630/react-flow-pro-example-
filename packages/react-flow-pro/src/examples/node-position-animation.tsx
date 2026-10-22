@@ -1,3 +1,7 @@
+/**
+ * 节点位置动画：切换布局目标，用定时器逐帧插值生成画布中的实际显示位置。
+ * 每个画布实例通过 createExampleScope 创建独立作用域，避免缓存、store 和可变初始数据跨实例共享。
+ */
 import * as React from 'react'
 import { timer as createAnimationTimer } from 'd3-timer'
 import {
@@ -11,8 +15,14 @@ import {
   Background,
   applyEdgeChanges,
 } from '@xyflow/react'
+import type { Edge, Node, NodeChange, EdgeChange, XYPosition } from '@xyflow/react'
+
+/** 布局表以节点 ID 索引目标坐标，节点数据只承载显示标签。 */
+type AnimatedNode = Node<{ label: string }>
+
+/** 创建本示例的组件、算法和局部状态；根组件惰性初始化后在本次挂载中复用。 */
 function createExampleScope() {
-  const INITIAL_NODES = [
+  const INITIAL_NODES: AnimatedNode[] = [
     {
       id: 'A',
       position: {
@@ -64,7 +74,7 @@ function createExampleScope() {
       },
     },
   ]
-  const LAYOUT_POSITIONS = [
+  const LAYOUT_POSITIONS: Record<string, XYPosition>[] = [
     {
       A: {
         x: 0,
@@ -110,10 +120,17 @@ function createExampleScope() {
       },
     },
   ]
-  /* 以当前画布位置为起点、目标节点位置为终点；定时器按经过时间线性插值，结束后写回精确目标并停止。 */
-  function useAnimatedNodes(targetNodes, { animationDuration = 300 } = {}) {
+  /**
+   * 把目标节点转换为每一帧显示的节点列表。输入数组保存最终布局，返回数组保存插值位置。
+   * 起点通过 getNode 读取画布当前坐标，因此连续切换布局时可以从当前显示位置继续。
+   * D3 定时器提供经过毫秒数：progress = elapsed / duration，再分别插值 x、y。
+   * 超过持续时间后写回完整目标数组，消除浮点误差，并停止本轮定时器。
+   * @param targetNodes 切换布局后期望到达的节点及数据。
+   * animationDuration 为单次插值时长，单位为毫秒。
+   */
+  function useAnimatedNodes(targetNodes: AnimatedNode[], { animationDuration = 300 } = {}) {
     const [animatedNodes, setAnimatedNodes] = React.useState(targetNodes)
-    const { getNode } = useReactFlow()
+    const { getNode } = useReactFlow<AnimatedNode, Edge>()
     React.useEffect(() => {
       const nodeTransitions = targetNodes.map((targetNode) => ({
         id: targetNode.id,
@@ -145,28 +162,34 @@ function createExampleScope() {
     account: 'paid-pro',
     hideAttribution: true,
   }
-  /* 保存当前布局序号；切换时只更新目标位置，实际显示的节点由动画 hook 逐帧生成。 */
+  /**
+   * 布局切换只更新目标坐标；ReactFlow 渲染 useAnimatedNodes 的逐帧输出。
+   * 节点禁止手动拖动和连接，使布局表成为本示例唯一的位置来源。
+   * 布局序号放入 ref，不触发额外渲染；节点 ID 与两套布局表的键一一对应。
+   */
   function NodePositionAnimationFlow() {
     const layoutIndexRef = React.useRef(0)
     const [nodes, setNodes] = React.useState(INITIAL_NODES)
-    const [edges, setEdges] = React.useState([])
+    const [edges, setEdges] = React.useState<Edge[]>([])
     const animatedNodes = useAnimatedNodes(nodes, {
       animationDuration: 300,
     })
     const onNodesChange = React.useCallback(
-      (nodeChanges) => setNodes((currentNodes) => applyNodeChanges(nodeChanges, currentNodes)),
+      (nodeChanges: NodeChange<AnimatedNode>[]) =>
+        setNodes((currentNodes) => applyNodeChanges(nodeChanges, currentNodes)),
       [],
     )
     const onEdgesChange = React.useCallback(
-      (edgeChanges) => setEdges((currentEdges) => applyEdgeChanges(edgeChanges, currentEdges)),
+      (edgeChanges: EdgeChange<Edge>[]) =>
+        setEdges((currentEdges) => applyEdgeChanges(edgeChanges, currentEdges)),
       [],
     )
     const toggleLayout = React.useCallback(() => {
       layoutIndexRef.current = (layoutIndexRef.current + 1) % LAYOUT_POSITIONS.length
-      const nextLayoutPositions = LAYOUT_POSITIONS[layoutIndexRef.current]
+      const nextLayoutPositions = LAYOUT_POSITIONS[layoutIndexRef.current]!
       setNodes((currentNodes) =>
         currentNodes.map((currentNode) => {
-          const nextPosition = nextLayoutPositions[currentNode.id]
+          const nextPosition = nextLayoutPositions[currentNode.id]!
           return {
             ...currentNode,
             position: nextPosition,
@@ -216,6 +239,7 @@ function createExampleScope() {
   }
 }
 function NodePositionAnimationCanvas() {
+  // 惰性保存组件类型，使普通重渲染沿用同一份图状态；工作台重置时重新挂载。
   const [Example] = React.useState(createExampleScope)
   return <Example />
 }

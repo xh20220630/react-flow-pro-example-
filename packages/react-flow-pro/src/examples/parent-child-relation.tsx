@@ -1,3 +1,7 @@
+/**
+ * 父子节点关系：拖入分组时换算相对坐标，脱离分组时恢复绝对坐标。
+ * 每个画布实例通过 createExampleScope 创建独立作用域，避免缓存、store 和可变初始数据跨实例共享。
+ */
 import * as React from 'react'
 import {
   Position,
@@ -13,26 +17,39 @@ import {
   Handle,
   addEdge,
 } from '@xyflow/react'
+import type { Connection, Edge, Node, NodeProps, OnNodeDrag } from '@xyflow/react'
+
+/** 分组与子节点共用图结构；只有子节点需要 label。 */
+type GroupedNode = Node<{ label?: string }>
+
+/** 创建本示例的组件、算法和局部状态；根组件惰性初始化后在本次挂载中复用。 */
 function createExampleScope() {
-  /* 解除父子关系时，将父节点的绝对坐标加回子节点的相对坐标，使节点在画布上的位置保持不变。 */
+  /**
+   * 解除指定节点的父子关系，保持屏幕中可见位置不变。
+   * 子节点 position 属于父坐标系，因此脱离时加回父节点 positionAbsolute。
+   * 同时移除 parentId、extent、expandParent，避免残留父范围约束影响顶层拖动。
+   * 如果还传入 groupIdToRemove，则在同一轮更新中移除对应父组。
+   */
   function useDetachNodes() {
-    const { setNodes, getNodes, getInternalNode } = useReactFlow()
+    const { setNodes, getNodes, getInternalNode } = useReactFlow<GroupedNode, Edge>()
     return React.useCallback(
-      (nodeIdsToDetach, groupIdToRemove) => {
+      (nodeIdsToDetach: string[], groupIdToRemove?: string) => {
         setNodes(
           getNodes()
             .map((node) => {
               if (nodeIdsToDetach.includes(node.id) && node.parentId) {
                 const parentInternalNode = getInternalNode(node.parentId)
+                // 删除约束字段表示恢复为顶层节点，满足严格可选属性类型。
+                const detachedNode = { ...node }
+                delete detachedNode.expandParent
+                delete detachedNode.parentId
+                delete detachedNode.extent
                 return {
-                  ...node,
+                  ...detachedNode,
                   position: {
                     x: node.position.x + (parentInternalNode?.internals.positionAbsolute.x ?? 0),
                     y: node.position.y + (parentInternalNode?.internals.positionAbsolute.y ?? 0),
                   },
-                  expandParent: undefined,
-                  parentId: undefined,
-                  extent: undefined,
                 }
               }
               return node
@@ -43,9 +60,9 @@ function createExampleScope() {
       [setNodes, getNodes, getInternalNode],
     )
   }
-  function ChildNode({ id: nodeId, data }) {
+  function ChildNode({ id: nodeId, data }: NodeProps<GroupedNode>) {
     const hasParent = useStore((flowState) => !!flowState.nodeLookup.get(nodeId)?.parentId)
-    const { deleteElements } = useReactFlow()
+    const { deleteElements } = useReactFlow<GroupedNode, Edge>()
     const detachNodes = useDetachNodes()
     return (
       <React.Fragment>
@@ -73,7 +90,7 @@ function createExampleScope() {
     )
   }
   const MemoizedChildNode = React.memo(ChildNode)
-  const INITIAL_NODES = [
+  const INITIAL_NODES: GroupedNode[] = [
     {
       id: 'group-1',
       type: 'group',
@@ -98,7 +115,7 @@ function createExampleScope() {
       data: {
         label: 'Node 1',
       },
-      extent: 'parent',
+      extent: 'parent' as const,
     },
     {
       id: '2',
@@ -112,15 +129,19 @@ function createExampleScope() {
       },
     },
   ]
-  const INITIAL_EDGES = []
-  const sortGroupsFirst = (firstNode, secondNode) =>
+  const INITIAL_EDGES: Edge[] = []
+  const sortGroupsFirst = (firstNode: GroupedNode, secondNode: GroupedNode) =>
     firstNode.type === secondNode.type
       ? 0
       : firstNode.type === 'group' && secondNode.type !== 'group'
         ? -1
         : 1
-  /* 将位置换算到父节点坐标系并限制在父节点边界内；沿用原实现，对传入节点的 position 对象原地更新。 */
-  const getClampedRelativePosition = (node, parentNode) => {
+  /**
+   * 将拖入节点的画布位置转换为父节点局部位置，并限制在父节点测量边界内。
+   * 左/上越界时贴到零点，右/下越界时使用父尺寸减子尺寸，内部位置减去父坐标。
+   * 沿用示例的原地位置更新方式；调用方必须在更新图状态的流程中使用此函数。
+   */
+  const getClampedRelativePosition = (node: GroupedNode, parentNode: GroupedNode) => {
     const relativePosition = node.position ?? {
       x: 0,
       y: 0,
@@ -149,13 +170,18 @@ function createExampleScope() {
     }
     return relativePosition
   }
-  /* 拖动过程中通过相交检测提示分组，结束时把节点附着到首个相交分组，并设置 parent 范围约束。 */
+  /**
+   * 拖动时用相交检测寻找候选 group，更新分组高亮和当前节点位置。
+   * 拖动结束后，把节点挂到首个相交分组，并将画布坐标转换为受约束的局部坐标。
+   * 节点排序保证父组在子节点之前，满足 React Flow 解析父子关系的顺序要求。
+   * 事件采用官方 OnNodeDrag 类型，同时覆盖鼠标和触摸输入。
+   */
   function useParentChildDrag() {
-    const { getIntersectingNodes, getNodes, setNodes } = useReactFlow()
+    const { getIntersectingNodes, getNodes, setNodes } = useReactFlow<GroupedNode, Edge>()
     return {
-      onNodeDragStop: React.useCallback(
+      onNodeDragStop: React.useCallback<OnNodeDrag<GroupedNode>>(
         /* 建立父子关系后将父分组排序到子节点之前，满足 React Flow 的父节点解析顺序。 */ (
-          dragEvent,
+          _dragEvent,
           draggedNode,
         ) => {
           if (draggedNode.type !== 'node' && !draggedNode.parentId) {
@@ -165,7 +191,7 @@ function createExampleScope() {
             (candidateNode) => candidateNode.type === 'group',
           )
           const targetGroup = intersectingGroups[0]
-          if (intersectingGroups.length && draggedNode.parentId !== targetGroup?.id) {
+          if (targetGroup && draggedNode.parentId !== targetGroup.id) {
             setNodes(
               getNodes()
                 .map((node) => {
@@ -184,7 +210,7 @@ function createExampleScope() {
                       ...node,
                       position: relativePosition,
                       parentId: targetGroup.id,
-                      extent: 'parent',
+                      extent: 'parent' as const,
                     }
                   }
                   return node
@@ -195,8 +221,8 @@ function createExampleScope() {
         },
         [getIntersectingNodes, getNodes, setNodes],
       ),
-      onNodeDrag: React.useCallback(
-        (dragEvent, draggedNode) => {
+      onNodeDrag: React.useCallback<OnNodeDrag<GroupedNode>>(
+        (_dragEvent, draggedNode) => {
           if (draggedNode.type !== 'node' && !draggedNode.parentId) {
             return
           }
@@ -240,7 +266,7 @@ function createExampleScope() {
     const [nodes, , onNodesChange] = useNodesState(INITIAL_NODES)
     const [edges, setEdges, onEdgesChange] = useEdgesState(INITIAL_EDGES)
     const onConnect = React.useCallback(
-      (connection) => setEdges((currentEdges) => addEdge(connection, currentEdges)),
+      (connection: Connection) => setEdges((currentEdges) => addEdge(connection, currentEdges)),
       [setEdges],
     )
     const { onNodeDrag, onNodeDragStop } = useParentChildDrag()
@@ -275,6 +301,7 @@ function createExampleScope() {
   }
 }
 function ParentChildRelationCanvas() {
+  // 惰性保存组件类型，使普通重渲染沿用同一份图状态；工作台重置时重新挂载。
   const [Example] = React.useState(createExampleScope)
   return <Example />
 }

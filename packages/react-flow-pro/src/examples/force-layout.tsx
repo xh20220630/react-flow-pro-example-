@@ -1,7 +1,11 @@
+/**
+ * 力导向布局：D3 模拟节点排斥与连线牵引，拖动时固定节点，结束后继续迭代。
+ * 每个画布实例通过 createExampleScope 创建独立作用域，避免缓存、store 和可变初始数据跨实例共享。
+ */
 import * as React from 'react'
 import { LayoutControlsProvider, LayoutControlsPanel } from '../controls/layout-controls'
 import { useLayoutControls } from '../controls/layout-controls-context'
-import { createDemoId } from '../runtime/create-id.js'
+import { createDemoId } from '../runtime/create-id'
 import {
   useEdgesState,
   useReactFlow,
@@ -15,24 +19,53 @@ import {
   addEdge,
 } from '@xyflow/react'
 import { forceLink, forceSimulation, forceX, forceManyBody, forceY } from 'd3-force'
+import type { Connection, Edge, Node, NodeOrigin, OnNodeDrag, ReactFlowState } from '@xyflow/react'
+import type { Simulation, SimulationNodeDatum, SimulationLinkDatum } from 'd3-force'
+
+/** D3 在节点副本上写入速度与固定位置，画布自身保留 React Flow 的 position。 */
+type ForceNode = Node<{ label: string }>
+type SimulatedNode = ForceNode & SimulationNodeDatum
+interface ForceOptions {
+  strength?: number
+  distance?: number
+}
+
+/** 创建本示例的组件、算法和局部状态；根组件惰性初始化后在本次挂载中复用。 */
 function createExampleScope() {
-  const selectTopologySize = (store) => store.nodes.length + store.edges.length
-  /* 把画布节点复制成 d3 模拟节点，叠加排斥力、连线弹力与向中心的力；tick 时把模拟坐标写回画布。 */
-  function useForceLayout({ strength: chargeStrength = -1e3, distance: linkDistance = 150 }) {
+  const selectTopologySize = (store: ReactFlowState) => store.nodes.length + store.edges.length
+  /**
+   * 把 React Flow 节点复制为 D3 模拟节点，在副本上维护速度、坐标和 fx/fy 固定位置。
+   * 组合多体排斥力、边连接弹力和 x/y 向心力，tick 时只把位置写回当前画布。
+   * 开始拖动时加热模拟，拖动中固定对应模拟节点，停止后释放固定坐标并继续计算。
+   * 节点或边数量、力参数或节点测量状态变化时重建模拟；effect 清理停止旧模拟。
+   * chargeStrength 是排斥力强度，负值表示排斥。
+   * linkDistance 是连线的期望长度，使用画布坐标单位。
+   */
+  function useForceLayout({
+    strength: chargeStrength = -1e3,
+    distance: linkDistance = 150,
+  }: ForceOptions) {
     const topologySize = useStore(selectTopologySize)
     const nodesInitialized = useNodesInitialized()
-    const { setNodes, getNodes, getEdges } = useReactFlow()
-    const draggedNodeRef = React.useRef(null)
-    const simulationNodesRef = React.useRef([])
-    const simulationRef = React.useRef(null)
-    const dragHandlers = React.useMemo(
+    const { setNodes, getNodes, getEdges } = useReactFlow<ForceNode, Edge>()
+    const draggedNodeRef = React.useRef<ForceNode | null>(null)
+    const simulationNodesRef = React.useRef<SimulatedNode[]>([])
+    const simulationRef = React.useRef<Simulation<
+      SimulatedNode,
+      SimulationLinkDatum<SimulatedNode>
+    > | null>(null)
+    const dragHandlers = React.useMemo<{
+      start: OnNodeDrag<ForceNode>
+      drag: OnNodeDrag<ForceNode>
+      stop: () => void
+    }>(
       () => ({
-        start: /* 拖动开始时记住节点并重新加热模拟。 */ (dragEvent, draggedNode) => {
+        start: /* 拖动开始时记住节点并重新加热模拟。 */ (_dragEvent, draggedNode) => {
           draggedNodeRef.current = draggedNode
           simulationRef.current?.alpha(0.3).restart()
         },
         drag: /* 拖动过程中用 fx/fy 固定对应模拟节点，使其它节点继续围绕拖动位置计算。 */ (
-          dragEvent,
+          _dragEvent,
           draggedNode,
         ) => {
           draggedNodeRef.current = draggedNode
@@ -70,19 +103,19 @@ function createExampleScope() {
         if (!currentNodes.length || !nodesInitialized) {
           return
         }
-        const simulationNodes = currentNodes.map((inputNode) => ({
+        const simulationNodes: SimulatedNode[] = currentNodes.map((inputNode) => ({
           ...inputNode,
           x: inputNode.position.x,
           y: inputNode.position.y,
         }))
         simulationNodesRef.current = simulationNodes
         const simulationLinks = currentEdges.map((inputEdge) => inputEdge)
-        const simulation = forceSimulation()
+        const simulation = forceSimulation<SimulatedNode>()
           .nodes(simulationNodes)
           .force('charge', forceManyBody().strength(chargeStrength))
           .force(
             'link',
-            forceLink(simulationLinks)
+            forceLink<SimulatedNode, SimulationLinkDatum<SimulatedNode>>(simulationLinks)
               .id((simulationNode) => simulationNode.id)
               .strength(0.05)
               .distance(linkDistance),
@@ -123,7 +156,7 @@ function createExampleScope() {
     )
     return dragHandlers
   }
-  const INITIAL_NODES = [
+  const INITIAL_NODES: ForceNode[] = [
     {
       id: '1',
       position: {
@@ -175,7 +208,7 @@ function createExampleScope() {
       },
     },
   ]
-  const INITIAL_EDGES = [
+  const INITIAL_EDGES: Edge[] = [
     {
       id: '1->2',
       source: '1',
@@ -201,24 +234,32 @@ function createExampleScope() {
     account: 'paid-pro',
     hideAttribution: true,
   }
-  const NODE_ORIGIN = [0.5, 0.5]
+  const NODE_ORIGIN: NodeOrigin = [0.5, 0.5]
   const DEFAULT_EDGE_OPTIONS = {
     type: 'straight',
   }
   const EMOJI_LABELS = ['👍', '👌', '👏', '👋', '🙌']
-  const randomEmojiLabel = () => EMOJI_LABELS[~~(Math.random() * (EMOJI_LABELS.length - 1))]
-  /* 点击空白区域创建节点；若存在未落到目标的连线则连接新节点；点击已有节点则创建相邻子节点及连线。 */
-  function ForceLayoutFlow({ strength: chargeStrength = -1e3, distance: linkDistance = 150 }) {
+  const randomEmojiLabel = () => EMOJI_LABELS[~~(Math.random() * (EMOJI_LABELS.length - 1))]!
+  /**
+   * 受控节点/连线与力模拟共享同一 Provider，新增图元素会触发下一轮模拟初始化。
+   * 空白点击新增节点；若上次连接没有落到目标，暂存的 source ID 会连接到本次新节点。
+   * 点击已有节点则在其附近追加子节点和连线，初始位置仅用于模拟启动。
+   * 拖动事件交给 useForceLayout，保持用户直接操作与模拟位置更新协调。
+   */
+  function ForceLayoutFlow({
+    strength: chargeStrength = -1e3,
+    distance: linkDistance = 150,
+  }: ForceOptions) {
     const [nodes, setNodes, onNodesChange] = useNodesState(INITIAL_NODES)
     const [edges, setEdges, onEdgesChange] = useEdgesState(INITIAL_EDGES)
-    const { screenToFlowPosition } = useReactFlow()
+    const { screenToFlowPosition } = useReactFlow<ForceNode, Edge>()
     const dragHandlers = useForceLayout({
       strength: chargeStrength,
       distance: linkDistance,
     })
-    const [pendingSourceNodeId, setPendingSourceNodeId] = React.useState(null)
+    const [pendingSourceNodeId, setPendingSourceNodeId] = React.useState<string | null>(null)
     const onPaneClick = React.useCallback(
-      (clickEvent) => {
+      (clickEvent: React.MouseEvent) => {
         const newNodePosition = screenToFlowPosition({
           x: clickEvent.clientX,
           y: clickEvent.clientY,
@@ -256,11 +297,11 @@ function createExampleScope() {
       [screenToFlowPosition, setNodes, pendingSourceNodeId],
     )
     const onConnect = React.useCallback(
-      (connection) => setEdges((currentEdges) => addEdge(connection, currentEdges)),
+      (connection: Connection) => setEdges((currentEdges) => addEdge(connection, currentEdges)),
       [setEdges],
     )
     const onNodeClick = React.useCallback(
-      (clickEvent, clickedNode) => {
+      (_clickEvent: React.MouseEvent, clickedNode: ForceNode) => {
         const childNodeId = createDemoId()
         const childNode = {
           id: childNodeId,
@@ -291,7 +332,7 @@ function createExampleScope() {
         onConnect={onConnect}
         onConnectEnd={React.useCallback(
           /* 连接结束且没有目标节点时暂存起点 id，供下一次点击画布创建节点后连线。 */ (
-            connectEndEvent,
+            _connectEndEvent,
             { toNode: targetNode, fromNode: sourceNode },
           ) => {
             if (!targetNode && sourceNode) {
@@ -355,6 +396,7 @@ function createExampleScope() {
   }
 }
 function ForceLayoutCanvas() {
+  // 惰性保存组件类型，使普通重渲染沿用同一份图状态；工作台重置时重新挂载。
   const [Example] = React.useState(createExampleScope)
   return <Example />
 }

@@ -1,3 +1,7 @@
+/**
+ * 选择分组：用选区包围盒创建父节点，动态拟合分组边界，解组时保持节点绝对位置。
+ * 每个画布实例通过 createExampleScope 创建独立作用域，避免缓存、store 和可变初始数据跨实例共享。
+ */
 import * as React from 'react'
 import {
   SelectionMode,
@@ -13,25 +17,46 @@ import {
   Background,
   addEdge,
 } from '@xyflow/react'
+import type { Connection, Dimensions, Edge, Node, NodeProps, XYPosition } from '@xyflow/react'
+
+/** 分组节点不需要文字，普通节点可选地携带标签。 */
+type GroupedNode = Node<{ label?: string }>
+/** 子节点在父坐标系中的包围盒，包含本轮累计的子节点数量。 */
+interface ChildBounds {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  numberOfChildren: number
+}
+/** 调整父节点后，offset 用来补偿子节点的局部坐标以保持绝对位置。 */
+interface GroupAdjustment {
+  dimension: Dimensions
+  offset: XYPosition
+  position: XYPosition
+}
+
+/** 创建本示例的组件、算法和局部状态；根组件惰性初始化后在本次挂载中复用。 */
 function createExampleScope() {
   /* 解组时把父节点绝对位置加回子节点坐标，并在同一次节点更新中移除指定分组。 */
   function useDetachNodes() {
-    const { setNodes, getNodes, getInternalNode } = useReactFlow()
+    const { setNodes, getNodes, getInternalNode } = useReactFlow<GroupedNode, Edge>()
     return React.useCallback(
-      (nodeIdsToDetach, groupIdToRemove) => {
+      (nodeIdsToDetach: string[], groupIdToRemove?: string) => {
         const detachedNodeIds = new Set(nodeIdsToDetach)
-        const updatedNodes = []
+        const updatedNodes: GroupedNode[] = []
         for (const node of getNodes())
           if (groupIdToRemove !== node.id) {
             if (detachedNodeIds.has(node.id) && node.parentId) {
               const parentInternalNode = getInternalNode(node.parentId)
+              const detachedNode = { ...node }
+              delete detachedNode.parentId
               updatedNodes.push({
-                ...node,
+                ...detachedNode,
                 position: {
                   x: node.position.x + (parentInternalNode?.internals.positionAbsolute.x ?? 0),
                   y: node.position.y + (parentInternalNode?.internals.positionAbsolute.y ?? 0),
                 },
-                parentId: undefined,
               })
             } else {
               updatedNodes.push(node)
@@ -42,9 +67,9 @@ function createExampleScope() {
       [setNodes, getNodes, getInternalNode],
     )
   }
-  function GroupNode({ id: groupId }) {
+  function GroupNode({ id: groupId }: NodeProps<GroupedNode>) {
     const detachNodes = useDetachNodes()
-    const { getNodes } = useReactFlow()
+    const { getNodes } = useReactFlow<GroupedNode, Edge>()
     const hasChildren = useStore(
       (flowState) => (flowState.parentLookup.get(groupId)?.size ?? 0) > 0,
     )
@@ -72,11 +97,19 @@ function createExampleScope() {
   }
   const MemoizedGroupNode = React.memo(GroupNode)
   const createNodeId = (prefix = 'node') => `${prefix}_${Math.random() * 1e4}`
-  /* 用选区包围盒创建分组，并用节点绝对位置减去分组原点生成子节点相对坐标。 */
+  /**
+   * 订阅选区并排除 group 节点，仅在选中多个普通节点时展示创建分组入口。
+   * 用选区包围盒左上角作为新分组原点；读取内部节点的绝对位置后减去该原点。
+   * 将新分组放在节点数组首位，再为选区节点写入 parentId，避免父节点解析落后于子节点。
+   * 组尺寸由后续 fitGroups 计算，创建入口只负责拓扑与坐标变换。
+   */
   function GroupSelectionToolbar() {
-    const { setNodes, getNodesBounds, getNodes, getInternalNode } = useReactFlow()
-    const [selectedNodes, setSelectedNodes] = React.useState([])
-    useOnSelectionChange({
+    const { setNodes, getNodesBounds, getNodes, getInternalNode } = useReactFlow<
+      GroupedNode,
+      Edge
+    >()
+    const [selectedNodes, setSelectedNodes] = React.useState<GroupedNode[]>([])
+    useOnSelectionChange<GroupedNode>({
       onChange: ({ nodes: selectionNodes }) => {
         setSelectedNodes(selectionNodes.filter((node) => node.type !== 'group'))
       },
@@ -118,7 +151,7 @@ function createExampleScope() {
                       y: absolutePosition.y - groupPosition.y,
                     },
                     parentId: groupId,
-                    selected: node.selected ? false : undefined,
+                    selected: false,
                   }
                 }
                 return node
@@ -131,7 +164,7 @@ function createExampleScope() {
       </NodeToolbar>
     )
   }
-  const INITIAL_NODES = [
+  const INITIAL_NODES: GroupedNode[] = [
     {
       id: 'group-1',
       type: 'group',
@@ -205,15 +238,20 @@ function createExampleScope() {
       },
     },
   ]
-  const INITIAL_EDGES = []
-  function getNodeSize(node) {
+  const INITIAL_EDGES: Edge[] = []
+  function getNodeSize(node: GroupedNode): Dimensions {
     return {
       width: node.width ?? node.measured?.width ?? 0,
       height: node.height ?? node.measured?.height ?? 0,
     }
   }
   /* 累计子节点的带内边距包围盒，同时记录子节点数量供后续分组整理使用。 */
-  function expandChildBounds(bounds, childPosition, childSize, padding) {
+  function expandChildBounds(
+    bounds: ChildBounds,
+    childPosition: XYPosition,
+    childSize: Dimensions,
+    padding: number,
+  ) {
     const { x: childX, y: childY } = childPosition
     const paddedLeft = childX - padding
     const paddedTop = childY - padding
@@ -225,7 +263,10 @@ function createExampleScope() {
     bounds.y2 = paddedBottom > bounds.y2 ? paddedBottom : bounds.y2
     bounds.numberOfChildren += 1
   }
-  function getOrCreateChildBounds(childBoundsByParentId, parentId) {
+  function getOrCreateChildBounds(
+    childBoundsByParentId: Map<string, ChildBounds>,
+    parentId: string,
+  ) {
     let childBounds = childBoundsByParentId.get(parentId)
     if (!childBounds) {
       childBounds = {
@@ -240,7 +281,10 @@ function createExampleScope() {
     return childBounds
   }
   /* 由子节点包围盒计算分组尺寸、分组原点和对子节点坐标的补偿量。 */
-  function calculateGroupAdjustment(groupNode, childBounds) {
+  function calculateGroupAdjustment(
+    groupNode: GroupedNode,
+    childBounds: ChildBounds,
+  ): GroupAdjustment | undefined {
     const { x1: boundsLeft, y1: boundsTop, x2: boundsRight, y2: boundsBottom } = childBounds
     const groupWidth = boundsRight - boundsLeft
     const groupHeight = boundsBottom - boundsTop
@@ -269,13 +313,20 @@ function createExampleScope() {
       },
     }
   }
-  /* 逆序归并子节点包围盒，再顺序应用分组位置与尺寸调整；父组移动时对子节点减去同一偏移，以保持画布绝对位置。 */
-  function fitGroups(nodes, padding = 25) {
-    const groupsToRemove = new Map()
-    const childBoundsByParentId = new Map()
-    const adjustmentsByNodeId = new Map()
+  /**
+   * 按子节点内容拟合分组，同时处理嵌套组的尺寸和坐标补偿。
+   * 第一遍逆序累计带 padding 的子包围盒，记录待移除的空组/单子组及需要调整的组。
+   * 第二遍顺序应用调整：父组移动多少，子节点局部坐标就反向补偿多少。
+   * 父组被移除时，子节点恢复顶层坐标并去掉 parentId；仍存活的父子关系保持不变。
+   * 没有组尺寸/位置需要调整时复用输入数组，避免无意义的画布状态更新。
+   * @param padding 分组边界与子节点包围盒之间的留白，单位为画布坐标。
+   */
+  function fitGroups(nodes: GroupedNode[], padding = 25): GroupedNode[] {
+    const groupsToRemove = new Map<string, GroupedNode>()
+    const childBoundsByParentId = new Map<string, ChildBounds>()
+    const adjustmentsByNodeId = new Map<string, GroupAdjustment>()
     for (let nodeIndex = nodes.length - 1; nodeIndex >= 0; nodeIndex--) {
-      const node = nodes[nodeIndex]
+      const node = nodes[nodeIndex]!
       const childBounds = childBoundsByParentId.get(node.id)
       if ((!childBounds || childBounds.numberOfChildren === 1) && node.type === 'group') {
         groupsToRemove.set(node.id, node)
@@ -297,20 +348,21 @@ function createExampleScope() {
     if (adjustmentsByNodeId.size === 0) {
       return nodes
     }
-    const updatedNodes = []
+    const updatedNodes: GroupedNode[] = []
     for (const node of nodes) {
       if (groupsToRemove.has(node.id)) {
         continue
       }
       const removedParent = groupsToRemove.get(node.parentId || '')
       if (removedParent) {
+        const detachedNode = { ...node }
+        delete detachedNode.parentId
         updatedNodes.push({
-          ...node,
+          ...detachedNode,
           position: {
             x: node.position.x + removedParent.position.x,
             y: node.position.y + removedParent.position.y,
           },
-          parentId: undefined,
         })
         continue
       }
@@ -355,11 +407,16 @@ function createExampleScope() {
   const NODE_TYPES = {
     group: MemoizedGroupNode,
   }
+  /**
+   * 所有节点 change 先经 applyNodeChanges，再立即交给 fitGroups 归并组边界。
+   * 因此子节点拖动、尺寸变化和选区分组共用同一套拟合规则。
+   * 解组工具栏按当前 group 查询子节点，由 useDetachNodes 负责恢复画布绝对位置。
+   */
   function SelectionGroupingFlow() {
     const [nodes, setNodes] = useNodesState(INITIAL_NODES)
     const [edges, setEdges, onEdgesChange] = useEdgesState(INITIAL_EDGES)
     const onConnect = React.useCallback(
-      (connection) => setEdges((currentEdges) => addEdge(connection, currentEdges)),
+      (connection: Connection) => setEdges((currentEdges) => addEdge(connection, currentEdges)),
       [setEdges],
     )
     return (
@@ -399,6 +456,7 @@ function createExampleScope() {
   }
 }
 function SelectionGroupingCanvas() {
+  // 惰性保存组件类型，使普通重渲染沿用同一份图状态；工作台重置时重新挂载。
   const [Example] = React.useState(createExampleScope)
   return <Example />
 }

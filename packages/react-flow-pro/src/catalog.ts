@@ -43,8 +43,8 @@ export const PRO_EXAMPLES = [
     id: 'collaborative',
     category: 'Interaction',
     name: 'Collaborative',
-    title: '本地多人协作',
-    hint: '创建或加入 Flow，在同源标签页同步图、光标和正在拖动的连接。',
+    title: '多人协作',
+    hint: '创建 Flow 后分享链接，跨浏览器和设备同步图、表单、光标与连接草稿；右键画布添加节点。',
     path: 'interaction/collaborative',
   },
   {

@@ -40,6 +40,9 @@
     "react-dom": ">=19.2.5 <20"
   },
   "devDependencies": {
+    "@types/d3-force": "3.0.10",
+    "@types/d3-hierarchy": "3.1.7",
+    "@types/d3-timer": "3.0.2",
     "@types/node": "24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
@@ -59,6 +62,8 @@
     "lucide-react": "1.59.0",
     "perfect-cursors": "1.0.5",
     "perfect-freehand": "1.2.3",
+    "y-protocols": "1.0.7",
+    "y-websocket": "3.1.0",
     "yjs": "13.6.33",
     "zustand": "4.5.7"
   }

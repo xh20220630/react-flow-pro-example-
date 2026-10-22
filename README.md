@@ -1,6 +1,6 @@
 # React Flow Pro Examples
 
-独立的 **Next.js 16 + React 19 + TypeScript** 项目，提供 15 个 React Flow Pro 功能示例。全部运行源码位于本仓库，不需要 dlab、后端服务或其他本地项目。
+独立的 **Next.js 16 + React 19 + TypeScript** 项目，提供 15 个 React Flow Pro 功能示例。全部运行源码位于本仓库，不需要 dlab、外部协作服务或其他本地项目；项目自带协作后端。
 
 仓库：[xh20220630/react-flow-pro-example-](https://github.com/xh20220630/react-flow-pro-example-)
 
@@ -17,9 +17,9 @@ pnpm install
 pnpm dev
 ```
 
-本机项目目录是 `/usr/src/git-project/react-flow-pro-example-`。开发服务监听 `0.0.0.0:3000`，浏览器打开 <http://localhost:3000>；通过网络访问时将 localhost 替换为开发主机地址。
+本机项目目录是 `/usr/src/git-project/react-flow-pro-example-`。开发服务监听 `172.16.0.108:3000`，浏览器打开 <http://172.16.0.108:3000>；生产服务监听 `0.0.0.0:3000`，可使用部署主机地址访问。
 
-默认打开 Dynamic Layouting。支持中文和英文搜索、侧栏分类、URL hash 直达、浏览器前进后退、重置示例及窄屏导航。例如 <http://localhost:3000/#editable-edge>。
+默认打开 Dynamic Layouting。支持中文和英文搜索、侧栏分类、URL hash 直达、浏览器前进后退、重置示例及窄屏导航。例如 <http://172.16.0.108:3000/#editable-edge>。
 
 ## 功能
 
@@ -27,25 +27,28 @@ pnpm dev
 | ------------------- | ----------------------------------------------------------- |
 | Nodes               | 节点位置动画、流程图形状                                    |
 | Edges               | WASM 避障路由、可编辑连线                                   |
-| Interaction         | 辅助线与吸附、本地协作、复制剪切粘贴、撤销重做              |
+| Interaction         | 辅助线与吸附、多人协作、复制剪切粘贴、撤销重做              |
 | Subflows & Grouping | 选择分组、父子节点关系                                      |
 | Layout              | 展开折叠、Dagre / D3 / ELK 自动布局、力导向布局、动态树布局 |
 | Whiteboard          | 自由绘制、选择、移动与缩放笔迹                              |
 
-协作使用 Yjs 和 BroadcastChannel，支持同一浏览器、同源标签页或窗口中的表单、图、光标及连接草稿同步。在 Collaborative 中创建 Flow，然后从另一个同源标签页打开生成的链接。此实现不提供跨设备协作服务。
+Collaborative 按[官方 Pro 示例](https://reactflow.dev/examples/interaction/collaborative)的 Yjs + `y-websocket` 方式连接房间。在页面中创建 Flow，使用 Share 复制链接后，从另一个浏览器或另一台能访问本项目的设备打开同一链接；右键画布可新增文本和复选框节点。节点拖动、增删、连线与表单实时同步，光标和连接草稿通过 Yjs Awareness 同步，退出或断线后移除在线状态。
 
-图数据保存在内存中。切换或重置示例会创建新的画布状态；协作房间有在线参与者时，新加入的标签页会同步当前文档。刷新后不会从服务端恢复数据。
+`pnpm dev` 和 `pnpm start` 同时启动 Next.js 与协作服务，共用 3000 端口。开发服务保留当前的 `172.16.0.108` 监听地址；浏览器和协作连接使用同一访问域名，HTTP 自动使用 `ws`，HTTPS 自动使用 `wss`。通过反向代理部署时，需要把 `/collaboration/*` 的 WebSocket Upgrade 转发到应用。
+
+其他示例的图数据保存在当前画布内存中，切换或重置后创建新状态。协作房间的图数据保存在服务端进程内存中，刷新、所有人退出后再加入都会恢复同一房间的文档；服务重启后清空，不提供磁盘持久化。服务端负责首次初始化，多个用户同时加入不会重复生成初始节点。
 
 ## 结构
 
 ```text
 src/app/                       Next.js App Router、布局、页面和基础主题
+src/server/                    Next.js 自定义服务器与同端口 Yjs WebSocket 房间
 src/components/                浏览器组件入口、搜索、分类导航与重置
 packages/react-flow-pro/       @react-flow-pro-example/core，可单独构建和打包
   src/catalog.ts               15 个示例 ID、标题与操作提示
   src/pro-example-canvas.tsx   按需加载示例，提供统一 Canvas 与独立组件
   src/examples/                全部示例的节点、连线、交互与布局实现
-  src/collaboration/           Yjs 本地协作传输
+  src/collaboration/           官方 y-websocket 连接和会话清理
   src/controls/                Leva 布局参数面板
   src/lib/                    React Flow 几何工具
   src/runtime/                ID 与剪贴板工具
@@ -53,7 +56,7 @@ packages/react-flow-pro/       @react-flow-pro-example/core，可单独构建和
   docs/                       架构、源码阅读与功能原理
 ```
 
-应用、公共 API、协作传输、参数面板和几何工具使用 TypeScript。迁入的 15 个示例保留可读 JSX 实现与配套 `.d.ts`，由 Next.js 编译。功能包不依赖原项目的 editor、ui、domain 或设计 token 生成流程。
+应用、公共 API、协作传输、参数面板和几何工具使用 TypeScript。15 个示例统一使用 TSX，节点、连线、事件和算法数据参与严格类型检查；类型声明由源码构建生成，关键数据流与算法附有中文注释。功能包不依赖原项目的 editor、ui、domain 或设计 token 生成流程。
 
 ## Next.js 集成
 
@@ -82,3 +85,7 @@ packages/react-flow-pro/       @react-flow-pro-example/core，可单独构建和
 生产部署执行 `pnpm install --frozen-lockfile`、`pnpm build`、`pnpm start`。Next.js 应用使用源码入口，无需先执行 `pro:build`。独立功能包继续使用 Vite 生成 ESM 和 CSS；应用本身使用 Next.js。
 
 功能包 API 与使用方式见 [包说明](./packages/react-flow-pro/README.md)，实现细节见 [源码指南](./packages/react-flow-pro/docs/readable-source.md)、[功能原理](./packages/react-flow-pro/docs/pro-features.md) 和 [架构](./packages/react-flow-pro/docs/architecture.md)。迁移范围见 [迁移说明](./docs/migration.md)，依赖归属见 [NOTICE](./packages/react-flow-pro/NOTICE.md)。
+
+## 协作回归
+
+使用 `pnpm exec playwright install chromium` 准备浏览器，然后执行 `pnpm test:collaboration`。该命令先构建应用，再在独立的 3100 端口启动生产服务，使用隔离浏览器会话覆盖房间、图、表单、在线状态与断线重连。设置 `COLLABORATION_BASE_URL` 可以改为访问已启动的服务。

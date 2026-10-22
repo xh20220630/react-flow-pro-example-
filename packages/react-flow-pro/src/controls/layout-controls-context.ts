@@ -10,8 +10,15 @@ export function useLayoutControlStore() {
   return store
 }
 
-/** Register parameters in the closest canvas, rather than the global Leva store. */
-export function useLayoutControls(schema: ControlsSchema, dependencies: unknown[] = []) {
+/**
+ * 在当前画布的 Leva store 中注册参数，避免不同示例共享全局面板状态。
+ * 保留具体 Schema 泛型，使算法名、方向和间距的返回类型随面板配置推导，
+ * 而不是丢失为任意字符串索引的对象。
+ */
+export function useLayoutControls<Schema extends ControlsSchema>(
+  schema: Schema,
+  dependencies: unknown[] = [],
+): ReturnType<typeof useControls<Schema, Schema, Schema>> {
   const store = useLayoutControlStore()
-  return useControls(schema, { store }, dependencies)
+  return useControls<Schema, Schema, Schema>(schema, { store }, dependencies)
 }

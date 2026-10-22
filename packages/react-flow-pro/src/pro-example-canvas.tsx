@@ -5,21 +5,21 @@ import type { ProExampleId } from './catalog'
 import './styles/index.css'
 
 const examples = {
-  'node-position-animation': lazy(() => import('./examples/node-position-animation.jsx')),
-  shapes: lazy(() => import('./examples/shapes.jsx')),
-  'edge-routing': lazy(() => import('./examples/edge-routing.jsx')),
-  'editable-edge': lazy(() => import('./examples/editable-edge.jsx')),
-  'helper-lines': lazy(() => import('./examples/helper-lines.jsx')),
-  collaborative: lazy(() => import('./examples/collaborative.jsx')),
-  'copy-paste': lazy(() => import('./examples/copy-paste.jsx')),
-  'undo-redo': lazy(() => import('./examples/undo-redo.jsx')),
-  'selection-grouping': lazy(() => import('./examples/selection-grouping.jsx')),
-  'parent-child-relation': lazy(() => import('./examples/parent-child-relation.jsx')),
-  'expand-collapse': lazy(() => import('./examples/expand-collapse.jsx')),
-  'auto-layout': lazy(() => import('./examples/auto-layout.jsx')),
-  'force-layout': lazy(() => import('./examples/force-layout.jsx')),
-  'dynamic-layouting': lazy(() => import('./examples/dynamic-layouting.jsx')),
-  'freehand-draw': lazy(() => import('./examples/freehand-draw.jsx')),
+  'node-position-animation': lazy(() => import('./examples/node-position-animation')),
+  shapes: lazy(() => import('./examples/shapes')),
+  'edge-routing': lazy(() => import('./examples/edge-routing')),
+  'editable-edge': lazy(() => import('./examples/editable-edge')),
+  'helper-lines': lazy(() => import('./examples/helper-lines')),
+  collaborative: lazy(() => import('./examples/collaborative')),
+  'copy-paste': lazy(() => import('./examples/copy-paste')),
+  'undo-redo': lazy(() => import('./examples/undo-redo')),
+  'selection-grouping': lazy(() => import('./examples/selection-grouping')),
+  'parent-child-relation': lazy(() => import('./examples/parent-child-relation')),
+  'expand-collapse': lazy(() => import('./examples/expand-collapse')),
+  'auto-layout': lazy(() => import('./examples/auto-layout')),
+  'force-layout': lazy(() => import('./examples/force-layout')),
+  'dynamic-layouting': lazy(() => import('./examples/dynamic-layouting')),
+  'freehand-draw': lazy(() => import('./examples/freehand-draw')),
 } satisfies Record<ProExampleId, ComponentType>
 
 export type ProExampleCanvasProps = {

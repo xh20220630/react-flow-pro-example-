@@ -1,3 +1,7 @@
+/**
+ * 动态树布局：占位节点、追加分支和边中插入共同维护树结构，再以动画展示新布局。
+ * 每个画布实例通过 createExampleScope 创建独立作用域，避免缓存、store 和可变初始数据跨实例共享。
+ */
 import * as React from 'react'
 import { timer as createAnimationTimer } from 'd3-timer'
 import {
@@ -14,20 +18,31 @@ import {
   Handle,
 } from '@xyflow/react'
 import { stratify, tree } from 'd3-hierarchy'
+import type { Edge, EdgeProps, Node, NodeProps, ReactFlowState } from '@xyflow/react'
+
+/** 工作流节点和末端占位节点使用相同标签数据，由 type 决定交互方式。 */
+type WorkflowNode = Node<{ label: string }>
+
+/** 创建本示例的组件、算法和局部状态；根组件惰性初始化后在本次挂载中复用。 */
 function createExampleScope() {
-  const workflowTreeLayout = tree()
+  const workflowTreeLayout = tree<WorkflowNode>()
     .nodeSize([200, 150])
     .separation(() => 1)
   const ANIMATION_OPTIONS = {
     duration: 300,
   }
-  /* 用连线的 source/target 推导父子关系，构建 d3 层级树后计算坐标，再映射回 React Flow 节点。 */
-  function layoutWorkflowTree(nodes, edges) {
+  /**
+   * 把工作流图转成 D3 层级树，再将树布局坐标合并回原节点数据。
+   * 每个节点通过入边 target 找到父节点 source；输入必须是可由 stratify 表示的单根树。
+   * tree 的 nodeSize 固定同层与层间距离，separation 固定相邻分支之间的间距系数。
+   * 空图直接返回空数组；布局只替换 position，保留节点类型、标签及其他属性。
+   */
+  function layoutWorkflowTree(nodes: WorkflowNode[], edges: Edge[]): WorkflowNode[] {
     if (nodes.length === 0) {
       return []
     } else {
       return workflowTreeLayout(
-        stratify()
+        stratify<WorkflowNode>()
           .id((workflowNode) => workflowNode.id)
           .parentId(
             (workflowNode) =>
@@ -44,12 +59,20 @@ function createExampleScope() {
         }))
     }
   }
-  const selectNodeCount = (store) => store.nodeLookup.size
-  /* 订阅节点数量触发树布局；从画布当前位置插值到新位置，首次布局后跳过 fitView，后续增删结束时调整视口。 */
+  const selectNodeCount = (store: ReactFlowState) => store.nodeLookup.size
+  /**
+   * 用节点数量作为布局触发条件：增加、转换占位末端或边中插入后重新排树。
+   * 先保存每个节点的当前画布坐标与目标坐标，再由 D3 定时器逐帧线性插值。
+   * 结束时写入准确目标，首次布局由 ReactFlow 的 fitView 处理，后续变更再调整视口。
+   * effect 清理会停止旧计时器，快速连续操作时不会让旧动画继续覆盖新布局。
+   */
   function useWorkflowLayout() {
     const firstLayoutRef = React.useRef(true)
     const nodeCount = useStore(selectNodeCount)
-    const { getNodes, getNode, setNodes, setEdges, getEdges, fitView } = useReactFlow()
+    const { getNodes, getNode, setNodes, setEdges, getEdges, fitView } = useReactFlow<
+      WorkflowNode,
+      Edge
+    >()
     React.useEffect(() => {
       const nodeTransitions = layoutWorkflowTree(getNodes(), getEdges()).map((targetNode) => ({
         id: targetNode.id,
@@ -99,10 +122,14 @@ function createExampleScope() {
     '🍇 Grapes.🍈 Melon.🍉 Watermelon.🍊 Tangerine.🍋 Lemon.🍌 Banana.🍍 Pineapple.🥭 Mango.🍎 Red Apple.🍏 Green Apple.🍐 Pear.🍑 Peach.🍒 Cherries.🍓 Strawberry.🫐 Blueberries.🥝 Kiwi Fruit.🍅 Tomato.🫒 Olive.🥥 Coconut.🥑 Avocado.🍆 Eggplant.🥔 Potato.🥕 Carrot.🌽 Ear of Corn.🌶️ Hot Pepper.🫑 Bell Pepper.🥒 Cucumber.🥬 Leafy Green.🥦 Broccoli.🧄 Garlic.🧅 Onion.🍄 Mushroom.🥜 Peanuts.🌰 Chestnut.🍞 Bread.🥐 Croissant.🥖 Baguette Bread.🫓 Flatbread.🥨 Pretzel.🥯 Bagel.🥞 Pancakes.🧇 Waffle.🧀 Cheese Wedge.🍖 Meat on Bone.🍗 Poultry Leg.🥩 Cut of Meat.🥓 Bacon.🍔 Hamburger.🍟 French Fries.🍕 Pizza.🌭 Hot Dog.🥪 Sandwich.🌮 Taco.🌯 Burrito.🫔 Tamale.🥙 Stuffed Flatbread.🧆 Falafel.🥚 Egg.🍳 Cooking.🥘 Shallow Pan of Food.🍲 Pot of Food.🫕 Fondue.🥣 Bowl with Spoon.🥗 Green Salad.🍿 Popcorn.🧈 Butter.🧂 Salt.🥫 Canned Food.🍱 Bento Box.🍘 Rice Cracker.🍙 Rice Ball.🍚 Cooked Rice.🍛 Curry Rice.🍜 Steaming Bowl.🍝 Spaghetti.🍠 Roasted Sweet Potato.🍢 Oden.🍣 Sushi.🍤 Fried Shrimp.🍥 Fish Cake with Swirl.🥮 Moon Cake.🍡 Dango.🥟 Dumpling.🥠 Fortune Cookie.🥡 Takeout Box.🦪 Oyster.🍦 Soft Ice Cream.🍧 Shaved Ice.🍨 Ice Cream.🍩 Doughnut.🍪 Cookie.🎂 Birthday Cake.🍰 Shortcake.🧁 Cupcake.🥧 Pie.🍫 Chocolate Bar.🍬 Candy.🍭 Lollipop.🍮 Custard.🍯 Honey Pot.🍼 Baby Bottle.🥛 Glass of Milk.☕ Hot Beverage.🫖 Teapot.🍵 Teacup Without Handle.🍶 Sake.🍾 Bottle with Popping Cork.🍷 Wine Glass.🍸 Cocktail Glass.🍹 Tropical Drink.🍺 Beer Mug.🍻 Clinking Beer Mugs.🥂 Clinking Glasses.🥃 Tumbler Glass.🥤 Cup with Straw.🧋 Bubble Tea.🧃 Beverage Box.🧉 Mate.🧊 Ice.🥢 Chopsticks.🍽️ Fork and Knife with Plate.🍴 Fork and Knife.🥄 Spoon'.split(
       '.',
     )
-  const randomFoodLabel = () => FOOD_LABELS[Math.floor(Math.random() * FOOD_LABELS.length)]
-  /* 点击占位节点后将其转换成工作流节点，同时把入边转换为工作流边，并追加一个新的末端占位节点。 */
-  function useActivatePlaceholder(placeholderNodeId) {
-    const { getNode, setNodes, setEdges } = useReactFlow()
+  const randomFoodLabel = () => FOOD_LABELS[Math.floor(Math.random() * FOOD_LABELS.length)]!
+  /**
+   * 点击末端加号后，将该占位节点转换为带随机标签的 workflow 节点。
+   * 原有入边同步转换为 workflow 边，再追加一个新的占位节点及连接，维持可继续扩展的末端。
+   * 所有新节点继承当前占位位置，后续由布局动画分配最终位置；节点不存在时忽略操作。
+   */
+  function useActivatePlaceholder(placeholderNodeId: string) {
+    const { getNode, setNodes, setEdges } = useReactFlow<WorkflowNode, Edge>()
     return () => {
       const placeholderNode = getNode(placeholderNodeId)
       if (!placeholderNode) {
@@ -155,16 +182,20 @@ function createExampleScope() {
       )
     }
   }
-  const PlaceholderNode = React.memo(({ id: nodeId, data: nodeData }) => (
+  const PlaceholderNode = React.memo(({ id: nodeId, data: nodeData }: NodeProps<WorkflowNode>) => (
     <div onClick={useActivatePlaceholder(nodeId)} title="click to add a node">
       {nodeData.label}
       <Handle type="target" position={Position.Top} isConnectable={false} />
       <Handle type="source" position={Position.Bottom} isConnectable={false} />
     </div>
   ))
-  /* 为工作流节点追加子节点和末端占位节点；先移除该父节点现有的占位子节点及对应连线。 */
-  function useAddWorkflowChild(parentNodeId) {
-    const { setEdges, setNodes, getNodes, getEdges, getNode } = useReactFlow()
+  /**
+   * 为当前 workflow 节点增加一个普通子节点，并给新子节点追加末端占位节点。
+   * 先通过 getOutgoers 找出父节点已有的占位分支，删除这些占位节点及其入边。
+   * 保留父节点已有的真实分支，再同时追加两节点、两条边，使树结构始终完整。
+   */
+  function useAddWorkflowChild(parentNodeId: string) {
+    const { setEdges, setNodes, getNodes, getEdges, getNode } = useReactFlow<WorkflowNode, Edge>()
     return React.useCallback(() => {
       const parentNode = getNode(parentNodeId)
       if (!parentNode) {
@@ -223,7 +254,7 @@ function createExampleScope() {
   }
   const WORKFLOW_NODE_TYPES = {
     placeholder: PlaceholderNode,
-    workflow: React.memo(({ id: nodeId, data: nodeData }) => (
+    workflow: React.memo(({ id: nodeId, data: nodeData }: NodeProps<WorkflowNode>) => (
       <div onClick={useAddWorkflowChild(nodeId)} title="click to add a child node">
         {nodeData.label}
         <Handle type="target" position={Position.Top} isConnectable={false} />
@@ -242,7 +273,7 @@ function createExampleScope() {
     targetPosition,
     style,
     markerEnd,
-  }) {
+  }: EdgeProps) {
     const [edgePath] = getBezierPath({
       sourceX,
       sourceY,
@@ -251,11 +282,22 @@ function createExampleScope() {
       targetY,
       targetPosition,
     })
-    return <BaseEdge id={edgeId} style={style} path={edgePath} markerEnd={markerEnd} />
+    return (
+      <BaseEdge
+        id={edgeId}
+        style={style}
+        path={edgePath}
+        {...(markerEnd === undefined ? {} : { markerEnd })}
+      />
+    )
   }
-  /* 在原边中间插入工作流节点，用两条新边替换原边，并把新节点排在原目标节点之前。 */
-  function useInsertWorkflowNode(edgeId) {
-    const { setEdges, setNodes, getNode, getEdge } = useReactFlow()
+  /**
+   * 在指定边的源与目标之间插入节点，不改变原目标的后续分支。
+   * 先确认边与目标仍然存在，再用 source→inserted、inserted→target 替换原边。
+   * 新节点放在节点数组的原目标之前，并暂时使用目标坐标，等待树布局产生动画。
+   */
+  function useInsertWorkflowNode(edgeId: string) {
+    const { setEdges, setNodes, getNode, getEdge } = useReactFlow<WorkflowNode, Edge>()
     return () => {
       const originalEdge = getEdge(edgeId)
       if (!originalEdge) {
@@ -317,7 +359,7 @@ function createExampleScope() {
     targetPosition,
     style,
     markerEnd,
-  }) {
+  }: EdgeProps) {
     const insertWorkflowNode = useInsertWorkflowNode(edgeId)
     const [edgePath, labelX, labelY] = getBezierPath({
       sourceX,
@@ -329,7 +371,12 @@ function createExampleScope() {
     })
     return (
       <React.Fragment>
-        <BaseEdge id={edgeId} style={style} path={edgePath} markerEnd={markerEnd} />
+        <BaseEdge
+          id={edgeId}
+          style={style}
+          path={edgePath}
+          {...(markerEnd === undefined ? {} : { markerEnd })}
+        />
         <EdgeLabelRenderer>
           <button
             style={{
@@ -352,7 +399,7 @@ function createExampleScope() {
     account: 'paid-pro',
     hideAttribution: true,
   }
-  const INITIAL_NODES = [
+  const INITIAL_NODES: WorkflowNode[] = [
     {
       id: '1',
       data: {
@@ -376,7 +423,7 @@ function createExampleScope() {
       type: 'placeholder',
     },
   ]
-  const INITIAL_EDGES = [
+  const INITIAL_EDGES: Edge[] = [
     {
       id: '1=>2',
       source: '1',
@@ -428,6 +475,7 @@ function createExampleScope() {
   }
 }
 function DynamicLayoutingCanvas() {
+  // 惰性保存组件类型，使普通重渲染沿用同一份图状态；工作台重置时重新挂载。
   const [Example] = React.useState(createExampleScope)
   return <Example />
 }

@@ -1,4 +1,5 @@
-export async function copyText(text) {
+/** 优先使用异步剪贴板；HTTP 或权限受限时保留可手动复制的文本框。 */
+export async function copyText(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text)

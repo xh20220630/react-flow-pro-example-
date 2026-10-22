@@ -1,3 +1,7 @@
+/**
+ * 复制、剪切与粘贴：缓存选区内部的图结构，重新生成 ID 并整体平移节点坐标。
+ * 每个画布实例通过 createExampleScope 创建独立作用域，避免缓存、store 和可变初始数据跨实例共享。
+ */
 import * as React from 'react'
 import {
   getConnectedEdges,
@@ -11,22 +15,37 @@ import {
   Panel,
   addEdge,
 } from '@xyflow/react'
+import type { Connection, Edge, Node } from '@xyflow/react'
+
+/** 缓冲区保存完整节点和连线；粘贴时保留原有 data、样式和选择状态。 */
+type ClipboardNode = Node<{ label: string }>
+
+/** 创建本示例的组件、算法和局部状态；根组件惰性初始化后在本次挂载中复用。 */
 function createExampleScope() {
-  /* 缓存选中节点与两端都位于选区内的边；粘贴时统一更新 ID，并以鼠标所在画布坐标平移整个选区。 */
+  /**
+   * 提供当前画布独立的内存剪贴板，缓存完整节点和选区内部连线。
+   * 复制、剪切均检查连线两端是否都在选区内，避免粘贴出指向旧节点的跨区连线。
+   * 粘贴以缓冲节点的最小 x/y 为基准，将整组选区平移到鼠标所在画布坐标。
+   * 同一轮粘贴给节点 ID、边 ID 和边端点追加相同后缀，保持复制后的拓扑一致。
+   * 最后清除原图选择状态，鼠标位置监听在画布 DOM 卸载时解除。
+   */
   function useCopyPaste() {
     const pointerPositionRef = React.useRef({
       x: 0,
       y: 0,
     })
     const flowDomNode = useStore((flowState) => flowState.domNode)
-    const { getNodes, setNodes, getEdges, setEdges, screenToFlowPosition } = useReactFlow()
-    const [bufferedNodes, setBufferedNodes] = React.useState([])
-    const [bufferedEdges, setBufferedEdges] = React.useState([])
+    const { getNodes, setNodes, getEdges, setEdges, screenToFlowPosition } = useReactFlow<
+      ClipboardNode,
+      Edge
+    >()
+    const [bufferedNodes, setBufferedNodes] = React.useState<ClipboardNode[]>([])
+    const [bufferedEdges, setBufferedEdges] = React.useState<Edge[]>([])
     React.useEffect(() => {
       const clipboardEventTypes = ['cut', 'copy', 'paste']
       if (flowDomNode) {
-        const preventClipboardDefault = (clipboardEvent) => clipboardEvent.preventDefault()
-        const trackPointerPosition = (mouseEvent) => {
+        const preventClipboardDefault = (clipboardEvent: Event) => clipboardEvent.preventDefault()
+        const trackPointerPosition = (mouseEvent: MouseEvent) => {
           pointerPositionRef.current = {
             x: mouseEvent.clientX,
             y: mouseEvent.clientY,
@@ -142,8 +161,17 @@ function createExampleScope() {
       bufferedEdges,
     }
   }
-  /* 组合键只在按下沿触发一次；复制快捷键遇到浏览器文字选区时保留文字复制行为。 */
-  function useShortcut(keyCombinations, executeShortcut, preserveTextSelection = false) {
+  /**
+   * 把组合键的持续按下状态转换为一次操作，避免按住键时反复复制或粘贴。
+   * wasPressed 记录上一轮状态，只有从未按下变成按下时才执行回调。
+   * 输入框中的修饰键交给 useKeyPress 处理；复制遇到文字选区时保留文字复制。
+   * 各快捷键和工具栏按钮复用同一组 cut/copy/paste 操作，保证行为一致。
+   */
+  function useShortcut(
+    keyCombinations: string[],
+    executeShortcut: () => void,
+    preserveTextSelection = false,
+  ) {
     const [wasPressed, setWasPressed] = React.useState(false)
     const isPressed = useKeyPress(keyCombinations, {
       actInsideInputWithModifier: false,
@@ -159,7 +187,7 @@ function createExampleScope() {
       }
     }, [isPressed, wasPressed, executeShortcut, preserveTextSelection])
   }
-  const INITIAL_NODES = [
+  const INITIAL_NODES: ClipboardNode[] = [
     {
       id: 'a',
       data: {
@@ -191,7 +219,7 @@ function createExampleScope() {
       },
     },
   ]
-  const INITIAL_EDGES = [
+  const INITIAL_EDGES: Edge[] = [
     {
       id: 'a->b',
       source: 'a',
@@ -203,11 +231,16 @@ function createExampleScope() {
       target: 'c',
     },
   ]
+  /**
+   * 节点与连线使用 React Flow 的受控状态；连接事件只追加一条边。
+   * 工具栏根据选区和内存缓冲区决定按钮是否可用；按钮粘贴落在画布原点。
+   * 快捷键粘贴则使用鼠标位置，由 useCopyPaste 负责屏幕到画布坐标转换。
+   */
   function CopyPasteFlow() {
     const [nodes, , onNodesChange] = useNodesState(INITIAL_NODES)
     const [edges, setEdges, onEdgesChange] = useEdgesState(INITIAL_EDGES)
     const onConnect = React.useCallback(
-      (connection) => {
+      (connection: Connection) => {
         setEdges((currentEdges) => addEdge(connection, currentEdges))
       },
       [setEdges],
@@ -263,6 +296,7 @@ function createExampleScope() {
   }
 }
 function CopyPasteCanvas() {
+  // 惰性保存组件类型，使普通重渲染沿用同一份图状态；工作台重置时重新挂载。
   const [Example] = React.useState(createExampleScope)
   return <Example />
 }

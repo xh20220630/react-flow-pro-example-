@@ -1,3 +1,7 @@
+/**
+ * 流程图形状：复用 SVG 图形渲染节点，支持拖入画布、文字编辑、改色、缩放和连接。
+ * 每个画布实例通过 createExampleScope 创建独立作用域，避免缓存、store 和可变初始数据跨实例共享。
+ */
 import * as React from 'react'
 import {
   Position,
@@ -17,8 +21,23 @@ import {
   Background,
   Handle,
 } from '@xyflow/react'
+import type { Edge, MiniMapNodeProps, Node, NodeProps } from '@xyflow/react'
+
+/** SVG 图形函数统一接收数值尺寸和基础 SVG 属性，节点与缩略图复用同一套几何。 */
+type ShapeGeometryProps = Omit<React.SVGAttributes<SVGElement>, 'width' | 'height'> & {
+  width: number
+  height: number
+}
+type ShapeNodeModel = Node<{ type: string; color: string }>
+type ShapeSvgProps = Omit<ShapeGeometryProps, 'width' | 'height'> & {
+  type: string
+  width?: number | undefined
+  height?: number | undefined
+}
+
+/** 创建本示例的组件、算法和局部状态；根组件惰性初始化后在本次挂载中复用。 */
 function createExampleScope() {
-  const initialShapeNodes = [
+  const initialShapeNodes: ShapeNodeModel[] = [
     {
       id: '1',
       type: 'shape',
@@ -181,7 +200,7 @@ function createExampleScope() {
       },
     },
   ]
-  const initialShapeEdges = [
+  const initialShapeEdges: Edge[] = [
     {
       id: '1->2',
       source: '1',
@@ -260,10 +279,10 @@ function createExampleScope() {
       targetHandle: 'left',
     },
   ]
-  function EllipseShape({ width, height, ...svgProps }) {
+  function EllipseShape({ width, height, ...svgProps }: ShapeGeometryProps) {
     return <ellipse cx={width / 2} cy={height / 2} rx={width / 2} ry={height / 2} {...svgProps} />
   }
-  function RoundedRectangleShape({ width, height, ...svgProps }) {
+  function RoundedRectangleShape({ width, height, ...svgProps }: ShapeGeometryProps) {
     return (
       <rect
         x={0}
@@ -275,14 +294,14 @@ function createExampleScope() {
       />
     )
   }
-  function RectangleShape({ width, height, ...svgProps }) {
+  function RectangleShape({ width, height, ...svgProps }: ShapeGeometryProps) {
     return <rect x={0} y={0} width={width} height={height} {...svgProps} />
   }
   /* 将顶点序列转换成闭合 SVG 路径；各多边形复用同一套宽高坐标。 */
-  function closedPolygonPath(vertices) {
+  function closedPolygonPath(vertices: [number, number][]) {
     return `M${vertices.map(([x, y]) => `${x},${y}`).join(' L')} Z`
   }
-  function HexagonShape({ width, height, ...svgProps }) {
+  function HexagonShape({ width, height, ...svgProps }: ShapeGeometryProps) {
     const sideInset = width * 0.1
     return (
       <path
@@ -298,7 +317,7 @@ function createExampleScope() {
       />
     )
   }
-  function DiamondShape({ width, height, ...svgProps }) {
+  function DiamondShape({ width, height, ...svgProps }: ShapeGeometryProps) {
     return (
       <path
         d={closedPolygonPath([
@@ -311,7 +330,7 @@ function createExampleScope() {
       />
     )
   }
-  function ArrowRectangleShape({ width, height, ...svgProps }) {
+  function ArrowRectangleShape({ width, height, ...svgProps }: ShapeGeometryProps) {
     const arrowDepth = width * 0.1
     return (
       <path
@@ -326,7 +345,7 @@ function createExampleScope() {
       />
     )
   }
-  function CylinderShape({ width, height, ...svgProps }) {
+  function CylinderShape({ width, height, ...svgProps }: ShapeGeometryProps) {
     const capRadiusY = height * 0.125
     return (
       <path
@@ -335,7 +354,7 @@ function createExampleScope() {
       />
     )
   }
-  function TriangleShape({ width, height, ...svgProps }) {
+  function TriangleShape({ width, height, ...svgProps }: ShapeGeometryProps) {
     return (
       <path
         d={closedPolygonPath([
@@ -347,7 +366,7 @@ function createExampleScope() {
       />
     )
   }
-  function ParallelogramShape({ width, height, ...svgProps }) {
+  function ParallelogramShape({ width, height, ...svgProps }: ShapeGeometryProps) {
     const skewInset = width * 0.25
     return (
       <path
@@ -361,7 +380,7 @@ function createExampleScope() {
       />
     )
   }
-  function PlusShape({ width, height, ...svgProps }) {
+  function PlusShape({ width, height, ...svgProps }: ShapeGeometryProps) {
     return (
       <path
         d={closedPolygonPath([
@@ -384,7 +403,7 @@ function createExampleScope() {
       />
     )
   }
-  const shapeComponents = {
+  const shapeComponents: Record<string, React.ComponentType<ShapeGeometryProps>> = {
     circle: EllipseShape,
     'round-rectangle': RoundedRectangleShape,
     rectangle: RectangleShape,
@@ -396,8 +415,13 @@ function createExampleScope() {
     parallelogram: ParallelogramShape,
     plus: PlusShape,
   }
-  /* 从外部尺寸扣除描边占用的空间，再平移绘制形状，避免描边被 SVG 边界裁切。 */
-  function ShapeSvg({ type: shapeType, width, height, ...svgProps }) {
+  /**
+   * 统一节点、侧栏预览和缩略图使用的图形组件入口。
+   * 输入的 width/height 是外部尺寸，先扣除两侧描边占用，再平移实际图形。
+   * 根据 type 查询注册表，未知形状或尚无有效尺寸时暂不绘制。
+   * 几何组件只关心宽高和 SVG 属性，颜色、节点文字与拖动状态由上层管理。
+   */
+  function ShapeSvg({ type: shapeType, width, height, ...svgProps }: ShapeSvgProps) {
     const ShapeComponent = shapeComponents[shapeType]
     if (!ShapeComponent || !width || !height) {
       return null
@@ -414,7 +438,13 @@ function createExampleScope() {
     )
   }
   const shapeColors = ['#CF4C2C', '#EA9C41', '#EBC347', '#438D57', '#3F8AE2', '#803DEC']
-  function ShapeColorToolbar({ onColorChange = () => false, activeColor }) {
+  function ShapeColorToolbar({
+    onColorChange = () => false,
+    activeColor,
+  }: {
+    onColorChange?: (color: string) => void
+    activeColor: string
+  }) {
     return (
       <NodeToolbar className="nodrag" offset={32}>
         {shapeColors.map((color) => (
@@ -431,16 +461,21 @@ function createExampleScope() {
     )
   }
   const shapeHandlePositions = [Position.Top, Position.Right, Position.Bottom, Position.Left]
-  /* 形状节点共享颜色工具栏、尺寸控制和四向连接点；按住 Shift 时保持宽高比例。 */
-  function ShapeNode({ id: nodeId, selected, data, width, height }) {
+  /**
+   * 节点以 data.type 选择 SVG 图形，以 data.color 同时设置形状、Handle 与缩放器颜色。
+   * 工具栏通过 updateNodeData 更新当前节点颜色；文字保留独立输入控件。
+   * 按住 Shift 时缩放器保持宽高比例，四向 source Handle 支持 Loose 连接模式。
+   * 所有形状节点共用相同数据协议，侧栏新增节点无需注册新的节点组件。
+   */
+  function ShapeNode({ id: nodeId, selected, data, width, height }: NodeProps<ShapeNodeModel>) {
     const { color, type: shapeType } = data
-    const { updateNodeData } = useReactFlow()
+    const { updateNodeData } = useReactFlow<ShapeNodeModel, Edge>()
     const shiftPressed = useKeyPress('Shift')
     return (
       <React.Fragment>
         <ShapeColorToolbar
           onColorChange={React.useCallback(
-            (nextColor) => {
+            (nextColor: string) => {
               updateNodeData(nodeId, {
                 color: nextColor,
               })
@@ -473,9 +508,13 @@ function createExampleScope() {
       </React.Fragment>
     )
   }
-  /* 拖拽时把形状类型写入 DataTransfer，并使用隐藏的 SVG 预览作为拖拽图像。 */
-  function ShapeSidebarItem({ type: shapeType }) {
-    const dragImageRef = React.useRef(null)
+  /**
+   * HTML 拖动数据只保存形状类型，画布 drop 时再创建节点及计算坐标。
+   * 隐藏的完整尺寸 SVG 作为拖拽图像，侧栏中的小图标只用于展示。
+   * 拖拽图像 ref 只在 DOM 挂载后使用，不依赖全局元素查找。
+   */
+  function ShapeSidebarItem({ type: shapeType }: { type: string }) {
+    const dragImageRef = React.useRef<HTMLDivElement | null>(null)
     return (
       <div
         className="sidebar-item"
@@ -514,8 +553,8 @@ function createExampleScope() {
       </div>
     )
   }
-  function ShapeMiniMapNode({ id: nodeId, width, height, x, y, selected }) {
-    const internalNode = useInternalNode(nodeId)
+  function ShapeMiniMapNode({ id: nodeId, width, height, x, y, selected }: MiniMapNodeProps) {
+    const internalNode = useInternalNode<ShapeNodeModel>(nodeId)
     if (!internalNode) {
       return
     }
@@ -523,7 +562,7 @@ function createExampleScope() {
     if (!color || !shapeType) {
       return null
     }
-    const ShapeComponent = shapeComponents[shapeType]
+    const ShapeComponent = shapeComponents[shapeType]!
     return (
       <g
         transform={`translate(${x}, ${y})`}
@@ -549,10 +588,15 @@ function createExampleScope() {
     account: 'paid-pro',
     hideAttribution: true,
   }
-  const shapeSnapGrid = [10, 10]
-  /* 将屏幕落点转换到画布坐标，取消已有节点的选中状态，再插入并选中新形状节点。 */
+  const shapeSnapGrid: [number, number] = [10, 10]
+  /**
+   * 画布使用非受控初始图，后续新增和改色通过同一 Provider 的官方 API 完成。
+   * drop 把屏幕 client 坐标换成画布坐标，新节点默认 100×100 并被选中。
+   * 插入前取消已有节点的 selected 状态，使颜色工具栏跟随新创建的节点。
+   * snapGrid 只控制画布网格吸附，SVG 几何本身始终按节点的实时尺寸生成。
+   */
   function ShapesFlow() {
-    const { screenToFlowPosition, setNodes } = useReactFlow()
+    const { screenToFlowPosition, setNodes } = useReactFlow<ShapeNodeModel, Edge>()
     return (
       <ReactFlow
         defaultNodes={initialShapeNodes}
@@ -626,6 +670,7 @@ function createExampleScope() {
   }
 }
 function ShapesCanvas() {
+  // 惰性保存组件类型，使普通重渲染沿用同一份图状态；工作台重置时重新挂载。
   const [Example] = React.useState(createExampleScope)
   return <Example />
 }

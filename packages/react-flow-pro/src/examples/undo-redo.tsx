@@ -1,3 +1,7 @@
+/**
+ * 撤销与重做：用过去栈和未来栈保存整图快照，在图修改前记录历史。
+ * 每个画布实例通过 createExampleScope 创建独立作用域，避免缓存、store 和可变初始数据跨实例共享。
+ */
 import * as React from 'react'
 import {
   useEdgesState,
@@ -10,19 +14,35 @@ import {
   Background,
   addEdge,
 } from '@xyflow/react'
+import type { Connection, Edge, Node, NodeOrigin } from '@xyflow/react'
+
+/** 每个历史条目同时保存节点和连线，避免撤销后端点与节点状态不一致。 */
+interface GraphSnapshot {
+  nodes: HistoryNode[]
+  edges: Edge[]
+}
+type HistoryNode = Node<{ label?: string | undefined }>
+
+/** 创建本示例的组件、算法和局部状态；根组件惰性初始化后在本次挂载中复用。 */
 function createExampleScope() {
   const DEFAULT_HISTORY_OPTIONS = {
     maxHistorySize: 100,
     enableShortcuts: true,
   }
-  /* 用过去栈和未来栈保存整张图的节点、边快照；新操作入栈时清空未来栈，并限制过去栈长度。 */
+  /**
+   * 以整张图为单位维护 pastSnapshots 和 futureSnapshots 两个有界历史栈。
+   * takeSnapshot 必须在修改前调用：当前图进入过去栈，同时清空无法继续重做的未来分支。
+   * 撤销把当前图压入未来栈并恢复过去栈尾；重做反向操作，节点和连线总是一起恢复。
+   * 这里的 canUndo/canRedo 沿用原实现，实际表示按钮的 disabled 条件，即对应栈为空。
+   * 快捷键监听随配置和回调更新，effect 清理时解除，避免重复触发历史操作。
+   */
   const useUndoRedo = ({
     maxHistorySize = DEFAULT_HISTORY_OPTIONS.maxHistorySize,
     enableShortcuts = DEFAULT_HISTORY_OPTIONS.enableShortcuts,
   } = DEFAULT_HISTORY_OPTIONS) => {
-    const [pastSnapshots, setPastSnapshots] = React.useState([])
-    const [futureSnapshots, setFutureSnapshots] = React.useState([])
-    const { setNodes, setEdges, getNodes, getEdges } = useReactFlow()
+    const [pastSnapshots, setPastSnapshots] = React.useState<GraphSnapshot[]>([])
+    const [futureSnapshots, setFutureSnapshots] = React.useState<GraphSnapshot[]>([])
+    const { setNodes, setEdges, getNodes, getEdges } = useReactFlow<HistoryNode, Edge>()
     const takeSnapshot = React.useCallback(
       /* 在修改画布之前保存当前图，确保撤销能恢复操作发生前的完整状态。 */ () => {
         setPastSnapshots((previousSnapshots) => [
@@ -84,7 +104,7 @@ function createExampleScope() {
         if (!enableShortcuts) {
           return
         }
-        const handleHistoryShortcut = (keyboardEvent) => {
+        const handleHistoryShortcut = (keyboardEvent: KeyboardEvent) => {
           if (
             keyboardEvent.key?.toLowerCase() === 'z' &&
             (keyboardEvent.ctrlKey || keyboardEvent.metaKey) &&
@@ -120,24 +140,29 @@ function createExampleScope() {
     account: 'paid-pro',
     hideAttribution: true,
   }
-  const INITIAL_NODES = []
-  const INITIAL_EDGES = []
-  const NODE_ORIGIN = [0.5, 0.5]
-  /* 连线、拖动、删除、点击新增节点之前保存快照；canUndo/canRedo 返回的是禁用条件，因此按钮直接使用该值。 */
+  const INITIAL_NODES: HistoryNode[] = []
+  const INITIAL_EDGES: Edge[] = []
+  const NODE_ORIGIN: NodeOrigin = [0.5, 0.5]
+  /**
+   * 连线、拖动开始、选区拖动开始、删除和空白处新增节点前统一记录快照。
+   * 只在拖动开始时记录，避免把每一个鼠标移动位置都压入历史栈。
+   * 新增节点先将屏幕点击位置转换为画布坐标，再循环使用 NODE_WORDS 作为标签。
+   * 完整图状态由 React Flow 管理，历史 hook 通过 getNodes/getEdges 获取同一份当前数据。
+   */
   function UndoRedoFlow() {
     const { undo, redo, canUndo: undoDisabled, canRedo: redoDisabled, takeSnapshot } = useUndoRedo()
     const [nodes, , onNodesChange] = useNodesState(INITIAL_NODES)
     const [edges, setEdges, onEdgesChange] = useEdgesState(INITIAL_EDGES)
-    const { screenToFlowPosition, addNodes } = useReactFlow()
+    const { screenToFlowPosition, addNodes } = useReactFlow<HistoryNode, Edge>()
     const onConnect = React.useCallback(
-      (connection) => {
+      (connection: Connection) => {
         takeSnapshot()
         setEdges((currentEdges) => addEdge(connection, currentEdges))
       },
       [setEdges, takeSnapshot],
     )
     const onPaneClick = React.useCallback(
-      (mouseEvent) => {
+      (mouseEvent: React.MouseEvent) => {
         takeSnapshot()
         const nodePosition = screenToFlowPosition({
           x: mouseEvent.clientX,
@@ -205,7 +230,7 @@ function createExampleScope() {
       </ReactFlow>
     )
   }
-  function UndoRedoExample(props) {
+  function UndoRedoExample(props: Record<string, never>) {
     return (
       <ReactFlowProvider>
         <UndoRedoFlow {...props} />
@@ -222,6 +247,7 @@ function createExampleScope() {
   }
 }
 function UndoRedoCanvas() {
+  // 惰性保存组件类型，使普通重渲染沿用同一份图状态；工作台重置时重新挂载。
   const [Example] = React.useState(createExampleScope)
   return <Example />
 }

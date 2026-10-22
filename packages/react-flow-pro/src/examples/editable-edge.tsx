@@ -1,5 +1,9 @@
+/**
+ * 可编辑连线：由控制点生成多种路径，支持拖动控制点、移动折线段以及绘制连接草稿。
+ * 每个画布实例通过 createExampleScope 创建独立作用域，避免缓存、store 和可变初始数据跨实例共享。
+ */
 import * as React from 'react'
-import { createDemoId } from '../runtime/create-id.js'
+import { createDemoId } from '../runtime/create-id'
 import {
   Position,
   ConnectionMode,
@@ -17,13 +21,78 @@ import {
   addEdge,
 } from '@xyflow/react'
 import { create } from 'zustand'
+import type {
+  Connection,
+  ConnectionLineComponentProps,
+  Edge,
+  EdgeProps,
+  Node,
+  XYPosition,
+} from '@xyflow/react'
+
+/** 端点没有 ID；已保存控制点和临时插入控制点都在坐标上附加编辑元数据。 */
+interface PathPoint extends XYPosition {
+  id?: string
+  active?: boolean | undefined
+  prev?: string | XYPosition | undefined
+  direction?: StepDirection | undefined
+}
+interface IdentifiedControlPoint extends PathPoint {
+  id: string
+}
+type StepDirection = 'horiztonal' | 'vertical'
+type EdgeAlgorithmName = 'Catmull-Rom' | 'Bezier Catmull-Rom' | 'Step' | 'Linear'
+interface HandleSides {
+  fromSide: Position
+  toSide: Position
+}
+/** points 只保存内部控制点，绘制时才拼接两端 Handle，避免把旧端点位置持久化。 */
+type EditableEdgeModel = Edge<
+  { points: PathPoint[]; algorithm?: EdgeAlgorithmName | undefined },
+  'editable-edge'
+>
+type ControlPointUpdater = (points: PathPoint[]) => PathPoint[]
+interface ControlPointProps extends IdentifiedControlPoint {
+  index: number
+  color: string
+  setControlPoints: (update: ControlPointUpdater) => void
+}
+interface StepControlPointProps extends ControlPointProps {
+  initialStepPoints: PathPoint[]
+}
+interface PathOptions {
+  points: PathPoint[]
+  algorithm?: EdgeAlgorithmName | undefined
+  sides?: HandleSides
+  initialStepPoints: PathPoint[]
+}
+interface StepPointsOptions {
+  points: PathPoint[]
+  initialStepPoints: PathPoint[]
+}
+interface InitialStepOptions {
+  source: XYPosition
+  target: XYPosition
+  sourcePosition?: Position
+  targetPosition?: Position
+  center?: { x: number | undefined; y: number | undefined }
+  offset?: number
+}
+interface ConnectionLineStore {
+  connectionLinePath: XYPosition[]
+  setConnectionLinePath: (points: XYPosition[]) => void
+}
+
+/** 创建本示例的组件、算法和局部状态；根组件惰性初始化后在本次挂载中复用。 */
 function createExampleScope() {
-  const StepMoveDirection = (function (directions) {
-    directions.Horizontal = 'horiztonal'
-    directions.Vertical = 'vertical'
-    return directions
-  })({})
-  /* 曲线控制点分为已保存的实心点和可插入的空心中点。拖拽、方向键移动及 Enter 插点最终都更新同一组持久控制点。 */
+  // 保留原方向值的拼写；方向只约束控制点移动的轴，不参与显示文字。
+  const StepMoveDirection = { Horizontal: 'horiztonal', Vertical: 'vertical' } as const
+  /**
+   * 曲线控制点有两种状态：active 点已经保存在边数据中，空心中点只用于插入新点。
+   * 移动 active 点按 ID 替换坐标；移动空心中点则按 controlIndex 插入一个新的 active 点。
+   * 指针位置使用 screenToFlowPosition 转换为画布坐标，方向键按固定步长移动同一组数据。
+   * 删除后尝试把焦点移到前一个实心控制点；拖动结束或组件卸载时解除 DOM 指针监听。
+   */
   function CurveControlPoint({
     id: controlPointId,
     index: controlIndex,
@@ -32,13 +101,13 @@ function createExampleScope() {
     color,
     active,
     setControlPoints,
-  }) {
+  }: ControlPointProps) {
     const flowDomNode = useStore((storeState) => storeState.domNode)
-    const { screenToFlowPosition } = useReactFlow()
+    const { screenToFlowPosition } = useReactFlow<Node, EditableEdgeModel>()
     const [dragging, setDragging] = React.useState(false)
-    const circleRef = React.useRef(null)
+    const circleRef = React.useRef<SVGCircleElement | null>(null)
     const moveControlPoint = React.useCallback(
-      (position) => {
+      (position: XYPosition) => {
         setControlPoints((controlPoints) =>
           active
             ? controlPoints.map((controlPoint) =>
@@ -80,7 +149,7 @@ function createExampleScope() {
       )
       const previousActiveCircle = circleRef.current?.previousElementSibling?.previousElementSibling
       if (
-        previousActiveCircle?.tagName === 'circle' &&
+        previousActiveCircle instanceof SVGCircleElement &&
         previousActiveCircle.classList.contains('active')
       ) {
         window.requestAnimationFrame(() => {
@@ -89,7 +158,7 @@ function createExampleScope() {
       }
     }, [controlPointId, setControlPoints])
     const onKeyDown = React.useCallback(
-      (keyboardEvent) => {
+      (keyboardEvent: React.KeyboardEvent<SVGCircleElement>) => {
         switch (keyboardEvent.key) {
           case 'Enter':
           case 'Space':
@@ -140,7 +209,7 @@ function createExampleScope() {
       if (!flowDomNode || !active || !dragging) {
         return
       }
-      const onPointerMove = (pointerEvent) => {
+      const onPointerMove = (pointerEvent: PointerEvent) => {
         moveControlPoint(
           screenToFlowPosition({
             x: pointerEvent.clientX,
@@ -148,7 +217,7 @@ function createExampleScope() {
           }),
         )
       }
-      const onPointerEnd = (pointerEvent) => {
+      const onPointerEnd = (pointerEvent: PointerEvent) => {
         flowDomNode.removeEventListener('pointermove', onPointerMove)
         if (!active) {
           pointerEvent.preventDefault()
@@ -218,22 +287,22 @@ function createExampleScope() {
       />
     )
   }
-  const isStoredControlPoint = (point) => 'id' in point
-  function linearPath(points) {
+  const isStoredControlPoint = (point: PathPoint): point is IdentifiedControlPoint => 'id' in point
+  function linearPath(points: PathPoint[]) {
     if (points.length < 1) {
       return ''
     }
-    let path = `M ${points[0].x} ${points[0].y}`
+    let path = `M ${points[0]!.x} ${points[0]!.y}`
     for (let pointIndex = 0; pointIndex < points.length; pointIndex++)
-      path += ` L ${points[pointIndex].x} ${points[pointIndex].y}`
+      path += ` L ${points[pointIndex]!.x} ${points[pointIndex]!.y}`
     return path
   }
   /* 在每对相邻顶点之间生成一个非激活中点；保留已有控制点，允许用户从任意线段继续插点。 */
-  function linearControlPoints(points) {
-    const controls = []
+  function linearControlPoints(points: PathPoint[]): IdentifiedControlPoint[] {
+    const controls: IdentifiedControlPoint[] = []
     for (let pointIndex = 0; pointIndex < points.length - 1; pointIndex++) {
-      const segmentStart = points[pointIndex]
-      const segmentEnd = points[pointIndex + 1]
+      const segmentStart = points[pointIndex]!
+      const segmentEnd = points[pointIndex + 1]!
       if (isStoredControlPoint(segmentStart)) {
         controls.push(segmentStart)
       }
@@ -247,7 +316,7 @@ function createExampleScope() {
     }
     return controls
   }
-  function bezierControlOffset(distance, curvature) {
+  function bezierControlOffset(distance: number, curvature: number) {
     if (distance >= 0) {
       return 0.5 * distance
     } else {
@@ -255,7 +324,14 @@ function createExampleScope() {
     }
   }
   /* 根据连接点朝向设置贝塞尔端部控制坐标，反向连接时用曲率和距离平方根增加弯曲空间。 */
-  function bezierHandleControl(side, sourceX, sourceY, targetX, targetY, curvature) {
+  function bezierHandleControl(
+    side: Position,
+    sourceX: number,
+    sourceY: number,
+    targetX: number,
+    targetY: number,
+    curvature: number,
+  ): [number, number] {
     switch (side) {
       case Position.Left:
         return [sourceX - bezierControlOffset(sourceX - targetX, curvature), sourceY]
@@ -267,11 +343,16 @@ function createExampleScope() {
         return [sourceX, sourceY + bezierControlOffset(targetY - sourceY, curvature)]
     }
   }
-  /* 逐段利用前后邻点构造三次贝塞尔路径；启用朝向约束时用端部虚拟点满足连接柄方向。 */
+  /**
+   * 对每对相邻路径点计算一段三次贝塞尔曲线，使路径经过所有已保存控制点。
+   * 每段使用前驱、起点、终点和后继四个点，按 Catmull-Rom 系数换算两端贝塞尔控制坐标。
+   * 没有前驱或后继时默认复用端点；启用方向约束后，使用虚拟点匹配 Handle 出入方向。
+   * 输出只包含 SVG 路径文本，不修改 points；同一组点另由控制点生成函数计算可插入中点。
+   */
   function catmullRomPath(
-    points,
+    points: PathPoint[],
     respectHandleDirections = false,
-    sides = {
+    sides: HandleSides = {
       fromSide: Position.Left,
       toSide: Position.Right,
     },
@@ -279,10 +360,10 @@ function createExampleScope() {
     if (points.length < 2) {
       return ''
     }
-    let path = `M ${points[0].x} ${points[0].y}`
+    let path = `M ${points[0]!.x} ${points[0]!.y}`
     for (let pointIndex = 0; pointIndex < points.length - 1; pointIndex++) {
-      const segmentStart = points[pointIndex]
-      const segmentEnd = points[pointIndex + 1]
+      const segmentStart = points[pointIndex]!
+      const segmentEnd = points[pointIndex + 1]!
       const previousPoint =
         points[pointIndex - 1] ??
         (respectHandleDirections
@@ -307,17 +388,17 @@ function createExampleScope() {
   }
   /* 沿 Catmull-Rom 曲线在每段中点生成插入控制点，已保存顶点继续作为激活控制点保留。 */
   function catmullRomControlPoints(
-    points,
+    points: PathPoint[],
     respectHandleDirections = false,
-    sides = {
+    sides: HandleSides = {
       fromSide: Position.Left,
       toSide: Position.Right,
     },
   ) {
-    const controls = []
+    const controls: IdentifiedControlPoint[] = []
     for (let pointIndex = 0; pointIndex < points.length - 1; pointIndex++) {
-      const segmentStart = points[pointIndex]
-      const segmentEnd = points[pointIndex + 1]
+      const segmentStart = points[pointIndex]!
+      const segmentEnd = points[pointIndex + 1]!
       const previousPoint =
         points[pointIndex - 1] ??
         (respectHandleDirections
@@ -341,7 +422,7 @@ function createExampleScope() {
     return controls
   }
   /* 由起点连接柄的贝塞尔控制坐标反推一个虚拟前驱点，使曲线离开起点的方向与连接柄一致。 */
-  function sourcePhantomPoint(sourcePoint, nextPoint, side) {
+  function sourcePhantomPoint(sourcePoint: XYPosition, nextPoint: XYPosition, side: Position) {
     const handleControl = bezierHandleControl(
       side,
       sourcePoint.x,
@@ -356,7 +437,7 @@ function createExampleScope() {
     }
   }
   /* 由终点连接柄的贝塞尔控制坐标反推一个虚拟后继点，使曲线进入终点的方向与连接柄一致。 */
-  function targetPhantomPoint(previousPoint, targetPoint, side) {
+  function targetPhantomPoint(previousPoint: XYPosition, targetPoint: XYPosition, side: Position) {
     const handleControl = bezierHandleControl(
       side,
       targetPoint.x,
@@ -371,10 +452,10 @@ function createExampleScope() {
     }
   }
   function catmullRomCoordinate(
-    previousCoordinate,
-    startCoordinate,
-    endCoordinate,
-    followingCoordinate,
+    previousCoordinate: number,
+    startCoordinate: number,
+    endCoordinate: number,
+    followingCoordinate: number,
     progress = 0.5,
   ) {
     const progressSquared = progress ** 2
@@ -389,7 +470,17 @@ function createExampleScope() {
           progressCubed)
     )
   }
-  function edgeCenter({ sourceX, sourceY, targetX, targetY }) {
+  function edgeCenter({
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+  }: {
+    sourceX: number
+    sourceY: number
+    targetX: number
+    targetY: number
+  }): [number, number, number, number] {
     const halfWidth = Math.abs(targetX - sourceX) / 2
     const centerX = targetX < sourceX ? targetX + halfWidth : targetX - halfWidth
     const halfHeight = Math.abs(targetY - sourceY) / 2
@@ -418,7 +509,11 @@ function createExampleScope() {
       y: 1,
     },
   }
-  const stepTravelDirection = ({ source, sourcePosition = Position.Bottom, target }) =>
+  const stepTravelDirection = ({
+    source,
+    sourcePosition = Position.Bottom,
+    target,
+  }: InitialStepOptions) =>
     sourcePosition === Position.Left || sourcePosition === Position.Right
       ? source.x < target.x
         ? {
@@ -438,9 +533,15 @@ function createExampleScope() {
             x: 0,
             y: -1,
           }
-  const pointDistance = (sourcePoint, targetPoint) =>
+  const pointDistance = (sourcePoint: XYPosition, targetPoint: XYPosition) =>
     Math.sqrt((targetPoint.x - sourcePoint.x) ** 2 + (targetPoint.y - sourcePoint.y) ** 2)
-  /* 先沿连接柄方向扩展端点，再根据相对方向选择水平或垂直折线；近距离同向连接会修正扩展量。 */
+  /**
+   * 在未保存内部控制点时，为正交折线生成与 Handle 方向一致的初始路径。
+   * 先按 offset 向外扩展两端，再用相对位置确定主轴和行进方向。
+   * 相向 Handle 可按中心线分成三段；同向或垂直 Handle 使用相应拐点组合。
+   * 端点距离较近时修正间隙，避免初始折线向节点内部折回。
+   * 返回值包含起点、内部拐点和终点；持久化时只保留内部控制点。
+   */
   function initialStepPoints({
     source,
     sourcePosition = Position.Bottom,
@@ -451,7 +552,7 @@ function createExampleScope() {
       y: undefined,
     },
     offset = 20,
-  }) {
+  }: InitialStepOptions): PathPoint[] {
     const sourceDirection = handleDirections[sourcePosition]
     const targetDirection = handleDirections[targetPosition]
     const sourceGap = {
@@ -581,7 +682,12 @@ function createExampleScope() {
     ]
   }
   /* 直线段直接输出 L；转弯处使用不超过相邻半段长度的圆角半径，避免短线段的圆角越界。 */
-  function roundedStepBend(previousPoint, bendPoint, nextPoint, borderRadius) {
+  function roundedStepBend(
+    previousPoint: XYPosition,
+    bendPoint: XYPosition,
+    nextPoint: XYPosition,
+    borderRadius: number,
+  ) {
     const bendRadius = Math.min(
       pointDistance(previousPoint, bendPoint) / 2,
       pointDistance(bendPoint, nextPoint) / 2,
@@ -603,9 +709,19 @@ function createExampleScope() {
     return `L ${x},${y + bendRadius * (previousPoint.y < nextPoint.y ? -1 : 1)}Q ${x},${y} ${x + bendRadius * horizontalExitSign},${y}`
   }
   /* 节点移动后重对齐端部控制点：紧邻端点的线段保持与连接柄同向，并保留固定的向外间距。 */
-  const alignStepEndpoint = ({ points, side, handlePosition, isTarget = false }) => {
-    let alignmentAxis = 'x'
-    let outwardAxis = 'y'
+  const alignStepEndpoint = ({
+    points,
+    side,
+    handlePosition,
+    isTarget = false,
+  }: {
+    points: PathPoint[]
+    side: Position
+    handlePosition: XYPosition
+    isTarget?: boolean
+  }) => {
+    let alignmentAxis: 'x' | 'y' = 'x'
+    let outwardAxis: 'x' | 'y' = 'y'
     if (side === Position.Left || side === Position.Right) {
       alignmentAxis = 'y'
       outwardAxis = 'x'
@@ -619,37 +735,52 @@ function createExampleScope() {
     if (
       points[neighborIndex] &&
       points[endpointIndex] &&
-      points[neighborIndex][alignmentAxis] !== points[endpointIndex][alignmentAxis]
+      points[neighborIndex]![alignmentAxis] !== points[endpointIndex]![alignmentAxis]
     ) {
       const handleDirection = handleDirections[side]
       points[endpointIndex] = {
-        ...points[endpointIndex],
+        ...points[endpointIndex]!,
         [outwardAxis]: handleDirection[outwardAxis] * 20 + handlePosition[outwardAxis],
         [alignmentAxis]: handlePosition[alignmentAxis],
       }
       points[neighborIndex] = {
-        ...points[neighborIndex],
+        ...points[neighborIndex]!,
         [outwardAxis]: handleDirection[outwardAxis] * 20 + handlePosition[outwardAxis],
       }
     }
     if (
       points[neighborIndex] &&
       points[endpointIndex] &&
-      points[neighborIndex][alignmentAxis] === points[endpointIndex][alignmentAxis]
+      points[neighborIndex]![alignmentAxis] === points[endpointIndex]![alignmentAxis]
     ) {
       const handleDirection = handleDirections[side]
       points[endpointIndex] = {
-        ...points[endpointIndex],
+        ...points[endpointIndex]!,
         [alignmentAxis]: handlePosition[alignmentAxis],
         [outwardAxis]: handleDirection[outwardAxis] * 20 + handlePosition[outwardAxis],
       }
       points[neighborIndex] = {
-        ...points[neighborIndex],
+        ...points[neighborIndex]!,
         [alignmentAxis]: handlePosition[alignmentAxis],
       }
     }
   }
-  const alignStepEndpoints = ({ points, sides: { fromSide, toSide }, source, target }) => {
+  /**
+   * 节点移动后重新对齐已保存的折线端部，使线段继续从当前 Handle 向外延伸。
+   * 复制点数组后分别调整首尾控制点及相邻点，不直接修改 edge.data.points。
+   * 源端与目标端共享对齐逻辑，通过 isTarget 区分数组前后端，保持中间路径由用户控制。
+   */
+  const alignStepEndpoints = ({
+    points,
+    sides: { fromSide, toSide },
+    source,
+    target,
+  }: {
+    points: PathPoint[]
+    sides: HandleSides
+    source: XYPosition
+    target: XYPosition
+  }) => {
     const alignedPoints = [...(points || [])]
     alignStepEndpoint({
       points: alignedPoints,
@@ -664,9 +795,11 @@ function createExampleScope() {
     })
     return alignedPoints
   }
-  const resolvedStepPoints = ({ points, initialStepPoints: defaultStepPoints }) =>
-    points.length === 2 ? defaultStepPoints : points
-  function stepPath({ points, initialStepPoints: defaultStepPoints }) {
+  const resolvedStepPoints = ({
+    points,
+    initialStepPoints: defaultStepPoints,
+  }: StepPointsOptions) => (points.length === 2 ? defaultStepPoints : points)
+  function stepPath({ points, initialStepPoints: defaultStepPoints }: StepPointsOptions) {
     const resolvedPoints = resolvedStepPoints({
       points,
       initialStepPoints: defaultStepPoints,
@@ -676,9 +809,9 @@ function createExampleScope() {
         const segmentPath =
           pointIndex > 0 && pointIndex < resolvedPoints.length - 1
             ? roundedStepBend(
-                resolvedPoints[pointIndex - 1],
+                resolvedPoints[pointIndex - 1]!,
                 point,
-                resolvedPoints[pointIndex + 1],
+                resolvedPoints[pointIndex + 1]!,
                 5,
               )
             : `${pointIndex === 0 ? 'M' : 'L'}${point.x} ${point.y}`
@@ -687,17 +820,20 @@ function createExampleScope() {
       }, '') || ''
     )
   }
-  const isActiveStepSegment = ({ nextPoint }) => nextPoint.active
+  const isActiveStepSegment = ({ nextPoint }: { nextPoint: PathPoint }) => nextPoint.active
   /* 在内部正交线段的中点生成拖拽控制点；垂直段只能水平移动，水平段只能垂直移动。 */
-  function stepSegmentControlPoints({ points, initialStepPoints: defaultStepPoints }) {
-    const controls = []
+  function stepSegmentControlPoints({
+    points,
+    initialStepPoints: defaultStepPoints,
+  }: StepPointsOptions) {
+    const controls: IdentifiedControlPoint[] = []
     const resolvedPoints = resolvedStepPoints({
       points,
       initialStepPoints: defaultStepPoints,
     })
     for (let pointIndex = 1; pointIndex < resolvedPoints.length - 2; pointIndex++) {
-      const segmentStart = resolvedPoints[pointIndex]
-      const segmentEnd = resolvedPoints[pointIndex + 1]
+      const segmentStart = resolvedPoints[pointIndex]!
+      const segmentEnd = resolvedPoints[pointIndex + 1]!
       if (!segmentStart && !segmentEnd) {
         continue
       }
@@ -727,14 +863,14 @@ function createExampleScope() {
     }
     return controls
   }
-  const EdgeAlgorithm = (function (algorithms) {
-    algorithms.CatmullRom = 'Catmull-Rom'
-    algorithms.BezierCatmullRom = 'Bezier Catmull-Rom'
-    algorithms.Step = 'Step'
-    algorithms.Linear = 'Linear'
-    return algorithms
-  })({})
-  const algorithmColors = {
+  /** 使用字面量联合约束算法名称，路径、控制点和颜色索引共享同一套取值。 */
+  const EdgeAlgorithm = {
+    CatmullRom: 'Catmull-Rom',
+    BezierCatmullRom: 'Bezier Catmull-Rom',
+    Step: 'Step',
+    Linear: 'Linear',
+  } as const
+  const algorithmColors: Record<EdgeAlgorithmName, string> = {
     [EdgeAlgorithm.Linear]: '#0375ff',
     [EdgeAlgorithm.BezierCatmullRom]: '#68D391',
     [EdgeAlgorithm.CatmullRom]: '#FF0072',
@@ -750,7 +886,7 @@ function createExampleScope() {
       toSide: Position.Right,
     },
     initialStepPoints: defaultStepPoints,
-  }) {
+  }: PathOptions) {
     switch (algorithm) {
       case EdgeAlgorithm.Linear:
         return linearControlPoints(points)
@@ -773,7 +909,7 @@ function createExampleScope() {
       toSide: Position.Right,
     },
     initialStepPoints: defaultStepPoints,
-  }) {
+  }: PathOptions) {
     switch (algorithm) {
       case EdgeAlgorithm.Linear:
         return linearPath(points)
@@ -788,31 +924,39 @@ function createExampleScope() {
         return catmullRomPath(points, true, sides)
     }
   }
-  const equalPointPosition = (previousPoint, nextPoint) =>
-    previousPoint?.x === nextPoint?.x && previousPoint?.y === nextPoint?.y
+  const equalPointPosition = (
+    previousPoint: PathPoint | undefined,
+    nextPoint: PathPoint | undefined,
+  ) => previousPoint?.x === nextPoint?.x && previousPoint?.y === nextPoint?.y
   /* 删除同一水平线上连续三个以上的冗余点，只保留首尾坐标，供删除正交线段后清理路径。 */
-  function collapseHorizontalRuns(points) {
+  function collapseHorizontalRuns(points: PathPoint[]): PathPoint[] {
     if (points.length < 3) {
       return points
     }
-    const collapsedPoints = []
+    const collapsedPoints: PathPoint[] = []
     let runStart = 0
     for (; runStart < points.length;) {
-      const runY = points[runStart].y
+      const runY = points[runStart]!.y
       let runEnd = runStart + 1
-      for (; runEnd < points.length && points[runEnd].y === runY;) runEnd++
+      for (; runEnd < points.length && points[runEnd]!.y === runY;) runEnd++
       if (runEnd - runStart >= 3) {
-        collapsedPoints.push(points[runStart])
-        collapsedPoints.push(points[runEnd - 1])
+        collapsedPoints.push(points[runStart]!)
+        collapsedPoints.push(points[runEnd - 1]!)
       } else {
         for (let pointIndex = runStart; pointIndex < runEnd; pointIndex++)
-          collapsedPoints.push(points[pointIndex])
+          collapsedPoints.push(points[pointIndex]!)
       }
       runStart = runEnd
     }
     return collapsedPoints
   }
-  /* 拖动正交控制点时同步移动线段两端，并在首次拖动首尾线段时补留锚点，保持端部连接方向。 */
+  /**
+   * 折线的编辑入口位于内部线段中点，拖动时同时平移线段两端。
+   * 垂直线段只能沿 x 轴移动，水平线段只能沿 y 轴移动，始终保持路径正交。
+   * 初次拖动首尾内部线段会复制一个锚点，避免用户移动控制段时破坏 Handle 的固定出入方向。
+   * 删除线段时用相邻拐点合并路径，再压缩水平冗余点；缺少所需顶点时保留原路径。
+   * 空 points 使用默认内部路径作为起始值；控制点失效的旧指针事件不会写入缺失坐标。
+   */
   function StepSegmentControlPoint({
     id: controlPointId,
     index: controlIndex,
@@ -823,13 +967,19 @@ function createExampleScope() {
     setControlPoints,
     direction: moveDirection = StepMoveDirection.Horizontal,
     initialStepPoints: defaultStepPoints,
-  }) {
+  }: StepControlPointProps) {
     const flowDomNode = useStore((storeState) => storeState.domNode)
-    const { screenToFlowPosition } = useReactFlow()
+    const { screenToFlowPosition } = useReactFlow<Node, EditableEdgeModel>()
     const [dragging, setDragging] = React.useState(false)
-    const circleRef = React.useRef(null)
+    const circleRef = React.useRef<SVGCircleElement | null>(null)
     const constrainToMoveAxis = React.useCallback(
-      ({ prevControl: previousControl, pos: position }) => ({
+      ({
+        prevControl: previousControl,
+        pos: position,
+      }: {
+        prevControl: PathPoint
+        pos: XYPosition
+      }) => ({
         x: previousControl?.x,
         y: previousControl?.y,
         ...(moveDirection === StepMoveDirection.Vertical && {
@@ -846,7 +996,7 @@ function createExampleScope() {
       [defaultStepPoints],
     )
     const moveSegment = React.useCallback(
-      (position) => {
+      (position: XYPosition) => {
         setControlPoints((controlPoints) => {
           const currentPoints = controlPoints?.length === 0 ? defaultInteriorPoints : controlPoints
           const firstPoint = currentPoints[0]
@@ -854,6 +1004,8 @@ function createExampleScope() {
           const updatedPoints = [...currentPoints]
           const segmentStart = updatedPoints[controlIndex]
           const segmentEnd = updatedPoints[controlIndex + 1]
+          // 拖动期间路径可能因节点移动而重建；旧控制点事件不应写入缺失的线段。
+          if (!segmentStart || !segmentEnd) return controlPoints
           const movedStart = {
             ...segmentStart,
             ...constrainToMoveAxis({
@@ -900,7 +1052,8 @@ function createExampleScope() {
         const segmentStart = controlPoints[controlIndex]
         const segmentEnd = controlPoints[controlIndex + 1]
         if (
-          (!segmentStart && !segmentEnd) ||
+          !segmentStart ||
+          !segmentEnd ||
           !isActiveStepSegment({
             nextPoint: segmentEnd,
           })
@@ -912,34 +1065,36 @@ function createExampleScope() {
         if (segmentStart.y === segmentEnd.y) {
           isHorizontalSegment = true
         }
+        const nextCorner = remainingPoints[controlIndex + 2]
+        // 合并任何方向的线段都需要保留下一拐点，避免产生缺少 x 或 y 的顶点。
+        if (!nextCorner) return controlPoints
         if (isHorizontalSegment) {
-          const nextCorner = remainingPoints[controlIndex + 2]
           remainingPoints[controlIndex] = {
-            ...remainingPoints[controlIndex],
-            y: nextCorner?.y,
+            ...remainingPoints[controlIndex]!,
+            y: nextCorner.y,
           }
           remainingPoints[controlIndex + 1] = {
-            ...remainingPoints[controlIndex + 1],
-            y: nextCorner?.y,
+            ...remainingPoints[controlIndex + 1]!,
+            y: nextCorner.y,
           }
         } else {
-          const previousCorner = remainingPoints[controlIndex]
+          const previousCorner = segmentStart
           remainingPoints[controlIndex + 1] = {
-            ...remainingPoints[controlIndex + 1],
-            y: previousCorner?.y,
+            ...remainingPoints[controlIndex + 1]!,
+            y: previousCorner.y,
           }
           remainingPoints[controlIndex + 2] = {
-            ...remainingPoints[controlIndex + 2],
-            y: previousCorner?.y,
+            ...remainingPoints[controlIndex + 2]!,
+            y: previousCorner.y,
           }
         }
         remainingPoints = collapseHorizontalRuns(remainingPoints)
         remainingPoints[1] = {
-          ...remainingPoints[1],
+          ...remainingPoints[1]!,
           active: false,
         }
         remainingPoints[remainingPoints.length - 1] = {
-          ...remainingPoints[remainingPoints.length - 1],
+          ...remainingPoints[remainingPoints.length - 1]!,
           active: false,
         }
         if (remainingPoints.length < defaultInteriorPoints.length) {
@@ -950,7 +1105,7 @@ function createExampleScope() {
       })
     }, [controlIndex, setControlPoints, defaultInteriorPoints])
     const onKeyDown = React.useCallback(
-      (keyboardEvent) => {
+      (keyboardEvent: React.KeyboardEvent<SVGCircleElement>) => {
         switch (keyboardEvent.key) {
           case 'Enter':
           case 'Space':
@@ -1009,7 +1164,7 @@ function createExampleScope() {
       if (!flowDomNode || !active || !dragging) {
         return
       }
-      const onPointerMove = (pointerEvent) => {
+      const onPointerMove = (pointerEvent: PointerEvent) => {
         moveSegment(
           screenToFlowPosition({
             x: pointerEvent.clientX,
@@ -1017,7 +1172,7 @@ function createExampleScope() {
           }),
         )
       }
-      const onPointerEnd = (pointerEvent) => {
+      const onPointerEnd = (pointerEvent: PointerEvent) => {
         flowDomNode.removeEventListener('pointermove', onPointerMove)
         if (!active) {
           pointerEvent.preventDefault()
@@ -1087,16 +1242,22 @@ function createExampleScope() {
       />
     )
   }
-  /* 同一数量的控制点复用之前生成的 ID，避免重绘时 React 重新挂载控制圆点并丢失焦点。 */
-  const useStableControlPointIds = (controlPoints) => {
-    const idsRef = React.useRef([])
+  /**
+   * 给路径算法生成的临时中点分配稳定 React key，并保留已保存控制点的原 ID。
+   * 控制点数量相同时按索引复用上一轮 ID，避免每一帧路径更新都重新挂载圆点并丢失焦点。
+   * 数量改变时重建临时 ID 表；这个表只属于当前边，不作为共享或持久化图数据。
+   */
+  const useStableControlPointIds = (
+    controlPoints: IdentifiedControlPoint[],
+  ): IdentifiedControlPoint[] => {
+    const idsRef = React.useRef<string[]>([])
     if (idsRef.current.length === controlPoints.length) {
       return controlPoints.map((controlPoint, pointIndex) =>
         controlPoint.id
           ? controlPoint
           : {
               ...controlPoint,
-              id: idsRef.current[pointIndex],
+              id: idsRef.current[pointIndex]!,
             },
       )
     } else {
@@ -1117,7 +1278,13 @@ function createExampleScope() {
       })
     }
   }
-  /* 将端点、保存的控制点和算法组合成路径。边或相连节点被选中时显示编辑圆点，所有更新只写回当前边。 */
+  /**
+   * 把当前 Handle 端点、已保存内部点和算法配置组合成路径及编辑控件。
+   * 折线先对齐端部，再分派到 Step、Linear 或两种 Catmull-Rom 路径/中点算法。
+   * 边本身或相连节点被选中时显示控制点；所有编辑通过函数式 setEdges 只更新当前边。
+   * controlPointsRef 保存当前对齐结果，使连续拖动使用最新端部位置而不是旧闭包。
+   * 颜色由算法统一决定，临时插入中点和已保存点共用同一组更新入口。
+   */
   function EditableEdge({
     id: edgeId,
     selected,
@@ -1136,7 +1303,7 @@ function createExampleScope() {
       points: [],
     },
     ...edgeProps
-  }) {
+  }: EdgeProps<EditableEdgeModel>) {
     const sourcePoint = {
       x: sourceX,
       y: sourceY,
@@ -1146,11 +1313,11 @@ function createExampleScope() {
       y: targetY,
     }
     const edgeColor = algorithmColors[data.algorithm ?? EdgeAlgorithm.BezierCatmullRom]
-    const { setEdges } = useReactFlow()
+    const { setEdges } = useReactFlow<Node, EditableEdgeModel>()
     const showControls = useStore((storeState) => {
       const sourceNode = storeState.nodeLookup.get(sourceId)
       const targetNode = storeState.nodeLookup.get(targetId)
-      return selected || sourceNode.selected || targetNode.selected
+      return selected || sourceNode!.selected || targetNode!.selected
     })
     const defaultStepPoints = React.useMemo(
       () =>
@@ -1203,10 +1370,10 @@ function createExampleScope() {
         targetPosition,
       ],
     )
-    const controlPointsRef = React.useRef([])
+    const controlPointsRef = React.useRef<PathPoint[]>([])
     controlPointsRef.current = alignedControlPoints
     const setControlPoints = React.useCallback(
-      (updateControlPoints) => {
+      (updateControlPoints: ControlPointUpdater) => {
         setEdges((edges) =>
           edges.map((edge) => {
             if (edge.id !== edgeId || !isEditableEdge(edge)) {
@@ -1254,8 +1421,8 @@ function createExampleScope() {
           id={edgeId}
           path={path}
           {...edgeProps}
-          markerStart={markerStart}
-          markerEnd={markerEnd}
+          {...(markerStart === undefined ? {} : { markerStart })}
+          {...(markerEnd === undefined ? {} : { markerEnd })}
           style={{
             ...style,
             strokeWidth: 2,
@@ -1289,7 +1456,7 @@ function createExampleScope() {
       </React.Fragment>
     )
   }
-  const isEditableEdge = (edge) => edge.type === 'editable-edge'
+  const isEditableEdge = (edge: Edge): edge is EditableEdgeModel => edge.type === 'editable-edge'
   function EditableAnchorNode() {
     return (
       <React.Fragment>
@@ -1303,7 +1470,7 @@ function createExampleScope() {
   const editableNodeTypes = {
     custom: EditableAnchorNode,
   }
-  const initialEditableNodes = [
+  const initialEditableNodes: Node[] = [
     {
       id: '1',
       type: 'custom',
@@ -1380,7 +1547,7 @@ function createExampleScope() {
   const editableEdgeTypes = {
     'editable-edge': EditableEdge,
   }
-  const initialEditableEdges = [
+  const initialEditableEdges: EditableEdgeModel[] = [
     {
       id: '1->2',
       type: 'editable-edge',
@@ -1513,7 +1680,7 @@ function createExampleScope() {
       },
     },
   ]
-  const useConnectionLineStore = create((setStore) => ({
+  const useConnectionLineStore = create<ConnectionLineStore>((setStore) => ({
     connectionLinePath: [],
     setConnectionLinePath: (connectionLinePath) => {
       setStore({
@@ -1521,8 +1688,14 @@ function createExampleScope() {
       })
     },
   }))
-  const connectionSampleDistance = newEdgeAlgorithm === EdgeAlgorithm.BezierCatmullRom ? 50 : 25
-  /* 连接预览期间按住空格，且指针距上次采样足够远时记录一个途经点；建立边后这些点成为可编辑控制点。 */
+  const connectionSampleDistance =
+    (newEdgeAlgorithm as EdgeAlgorithmName) === EdgeAlgorithm.BezierCatmullRom ? 50 : 25
+  /**
+   * 自定义连接草稿复用正式边的路径算法，绘制和提交使用相同的坐标协议。
+   * 按住空格且指针离上次采样足够远时追加一个途经点，降低密集指针事件产生的点数。
+   * 草稿途经点暂存在当前示例的 Zustand store，onConnect 再为每点分配 ID 和 active 标记。
+   * 进入新一轮连接时清空旧草稿；空格键监听在预览卸载时解除。
+   */
   function EditableConnectionLine({
     fromX,
     fromY,
@@ -1531,7 +1704,7 @@ function createExampleScope() {
     fromPosition,
     toPosition,
     connectionStatus,
-  }) {
+  }: ConnectionLineComponentProps) {
     const { connectionLinePath, setConnectionLinePath } = useConnectionLineStore()
     const [spacePressed, setSpacePressed] = React.useState(false)
     const lastSample = connectionLinePath[connectionLinePath.length - 1] ?? {
@@ -1552,12 +1725,12 @@ function createExampleScope() {
       }
     }, [connectionLinePath, setConnectionLinePath, shouldSample, toX, toY])
     React.useEffect(() => {
-      function onKeyDown(keyboardEvent) {
+      function onKeyDown(keyboardEvent: KeyboardEvent) {
         if (keyboardEvent.key === ' ') {
           setSpacePressed(true)
         }
       }
-      function onKeyUp(keyboardEvent) {
+      function onKeyUp(keyboardEvent: KeyboardEvent) {
         if (keyboardEvent.key === ' ') {
           setSpacePressed(false)
         }
@@ -1628,7 +1801,11 @@ function createExampleScope() {
   const editableFitViewOptions = {
     padding: 0.4,
   }
-  /* 连接完成时读取预览采样点，赋予稳定 ID 和激活状态，再创建采用当前默认算法的可编辑边。 */
+  /**
+   * 画布保存受控节点和连线，使用自定义节点、正式边与连接草稿组件。
+   * onConnect 读取当前草稿途经点，补齐稳定 ID 后创建采用默认算法的 editable-edge。
+   * 各算法示例共享交互入口，面板颜色与边路径颜色保持一致。
+   */
   function EditableEdgeExample() {
     const [nodes, , onNodesChange] = useNodesState(initialEditableNodes)
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEditableEdges)
@@ -1639,9 +1816,9 @@ function createExampleScope() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={React.useCallback(
-          (connection) => {
+          (connection: Connection) => {
             const { connectionLinePath } = useConnectionLineStore.getState()
-            const newEdge = {
+            const newEdge: EditableEdgeModel = {
               ...connection,
               id: `${Date.now()}-${connection.source}-${connection.target}`,
               type: 'editable-edge',
@@ -1671,7 +1848,7 @@ function createExampleScope() {
         <Background />
         <Panel position="top-left">
           {Object.keys(EdgeAlgorithm).map((algorithmKey) => {
-            const algorithm = EdgeAlgorithm[algorithmKey]
+            const algorithm = EdgeAlgorithm[algorithmKey as keyof typeof EdgeAlgorithm]
             const color = algorithmColors[algorithm]
             return (
               <div
@@ -1700,6 +1877,7 @@ function createExampleScope() {
   }
 }
 function EditableEdgeCanvas() {
+  // 惰性保存组件类型，使普通重渲染沿用同一份图状态；工作台重置时重新挂载。
   const [Example] = React.useState(createExampleScope)
   return <Example />
 }

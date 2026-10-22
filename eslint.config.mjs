@@ -7,9 +7,17 @@ import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
 export default defineConfig([
-  globalIgnores(['**/node_modules/**', '.next/**', '**/dist/**', 'artifacts/**', 'next-env.d.ts']),
+  globalIgnores([
+    '**/node_modules/**',
+    '.next/**',
+    '**/dist/**',
+    'artifacts/**',
+    'next-env.d.ts',
+    'playwright-report/**',
+    'test-results/**',
+  ]),
   {
-    files: ['src/**/*.{ts,tsx}', 'next.config.ts'],
+    files: ['src/**/*.{ts,tsx}', 'next.config.ts', 'playwright.config.ts', 'tests/**/*.ts'],
     extends: [...nextVitals, ...nextTs],
   },
   {

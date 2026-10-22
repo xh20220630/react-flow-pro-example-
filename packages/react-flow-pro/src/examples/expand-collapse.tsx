@@ -1,3 +1,7 @@
+/**
+ * 展开与折叠：保留完整图状态，根据节点展开标记派生可见树并重新计算布局。
+ * 每个画布实例通过 createExampleScope 创建独立作用域，避免缓存、store 和可变初始数据跨实例共享。
+ */
 import * as React from 'react'
 import { LayoutControlsProvider, LayoutControlsPanel } from '../controls/layout-controls'
 import { useLayoutControls } from '../controls/layout-controls-context'
@@ -14,8 +18,14 @@ import {
   applyEdgeChanges,
 } from '@xyflow/react'
 import dagre from '@dagrejs/dagre'
+import type { Edge, Node, NodeProps, NodeChange, EdgeChange } from '@xyflow/react'
+
+/** expanded 是用户状态，expandable 在布局前按后继节点数量派生。 */
+type ExpandableNode = Node<{ expanded?: boolean; expandable?: boolean; label?: string }>
+
+/** 创建本示例的组件、算法和局部状态；根组件惰性初始化后在本次挂载中复用。 */
 function createExampleScope() {
-  const INITIAL_NODES = [
+  const INITIAL_NODES: ExpandableNode[] = [
     {
       id: 'A',
       position: {
@@ -105,7 +115,7 @@ function createExampleScope() {
       type: 'expandcollapse',
     },
   ]
-  const INITIAL_EDGES = [
+  const INITIAL_EDGES: Edge[] = [
     {
       id: 'A->B',
       source: 'A',
@@ -138,7 +148,7 @@ function createExampleScope() {
     },
   ]
   /* 根据是否有子节点、是否展开选择节点提示文字。 */
-  function expandCollapseLabel({ expanded, expandable }) {
+  function expandCollapseLabel({ expanded, expandable }: ExpandableNode['data']) {
     if (expandable) {
       if (expanded) {
         return 'collapse ▲'
@@ -155,8 +165,8 @@ function createExampleScope() {
     id: nodeId,
     positionAbsoluteX,
     positionAbsoluteY,
-  }) {
-    const { addNodes, addEdges, fitView } = useReactFlow()
+  }: NodeProps<ExpandableNode>) {
+    const { addNodes, addEdges, fitView } = useReactFlow<ExpandableNode, Edge>()
     return (
       <div>
         <div>{expandCollapseLabel(nodeData)}</div>
@@ -195,22 +205,35 @@ function createExampleScope() {
       </div>
     )
   }
-  /* 根据后继节点设置 expandable；遇到折叠节点时用栈遍历后代，并从本次布局图中逐一移除，原始节点数组仍保留。 */
-  function removeCollapsedDescendants(graph, node) {
+  /**
+   * 根据 Dagre 图的后继列表派生 expandable，供节点提示是否还有可展开子节点。
+   * 当 expanded 为假时，用栈遍历后代，并从本轮临时布局图删除；原始 nodes/edges 不删除。
+   * 后续节点可能已随祖先折叠移除，successors 返回空值时按空后继处理。
+   * expanded 属于用户状态，expandable 属于派生状态；再次展开仍能恢复完整后代。
+   */
+  function removeCollapsedDescendants(
+    graph: InstanceType<typeof dagre.graphlib.Graph>,
+    node: ExpandableNode,
+  ) {
     const descendantIds = graph.successors(node.id)
     node.data.expandable = !!descendantIds?.length
     if (!node.data.expanded) {
       for (; descendantIds?.length;) {
-        const descendantId = descendantIds.pop()
-        descendantIds.push(...graph.successors(descendantId))
+        const descendantId = descendantIds.pop()!
+        descendantIds.push(...(graph.successors(descendantId) ?? []))
         graph.removeNode(descendantId)
       }
     }
   }
-  /* 为完整节点集构建 Dagre 图，移除折叠分支后仅对可见节点布局；展开状态保存在原数据中，重新展开即可恢复后代。 */
+  /**
+   * 从完整图状态派生本轮可见节点，再用 Dagre 按从上到下的方向布局。
+   * treeWidth/treeHeight 是布局用的虚拟节点尺寸，用于控制分支间距与层间距。
+   * 折叠仅影响临时布局图：输出保留原始边集，可见节点只改 position 和派生 data。
+   * 关闭 layoutNodes 时直接返回输入，便于保留已有位置；useMemo 缓存相同输入的结果。
+   */
   function useExpandCollapse(
-    nodes,
-    edges,
+    nodes: ExpandableNode[],
+    edges: Edge[],
     { layoutNodes = true, treeWidth = 220, treeHeight = 100 } = {},
   ) {
     return React.useMemo(() => {
@@ -266,11 +289,15 @@ function createExampleScope() {
   const EXPAND_COLLAPSE_NODE_TYPES = {
     expandcollapse: ExpandCollapseNode,
   }
-  /* 点击节点只切换其 expanded 状态，派生的可见节点交给画布渲染，再以动画调整视口。 */
+  /**
+   * 点击节点时仅反转 data.expanded；可见节点列表由 useExpandCollapse 派生。
+   * 节点按钮追加子节点和对应边，已展开时阻止冒泡，避免新增操作同时触发折叠。
+   * 画布禁止拖动与连接，位置由布局统一生成；视口在切换展开状态后以动画调整。
+   */
   function ExpandCollapseFlow({ treeWidth = 220, treeHeight = 100 } = {}) {
     const [nodes, setNodes] = React.useState(INITIAL_NODES)
     const [edges, setEdges] = React.useState(INITIAL_EDGES)
-    const { fitView } = useReactFlow()
+    const { fitView } = useReactFlow<ExpandableNode, Edge>()
     const { nodes: visibleNodes, edges: layoutEdges } = useExpandCollapse(nodes, edges, {
       treeWidth,
       treeHeight,
@@ -281,15 +308,17 @@ function createExampleScope() {
         nodes={visibleNodes}
         edges={layoutEdges}
         onNodesChange={React.useCallback(
-          (nodeChanges) => setNodes((currentNodes) => applyNodeChanges(nodeChanges, currentNodes)),
+          (nodeChanges: NodeChange<ExpandableNode>[]) =>
+            setNodes((currentNodes) => applyNodeChanges(nodeChanges, currentNodes)),
           [],
         )}
         onEdgesChange={React.useCallback(
-          (edgeChanges) => setEdges((currentEdges) => applyEdgeChanges(edgeChanges, currentEdges)),
+          (edgeChanges: EdgeChange<Edge>[]) =>
+            setEdges((currentEdges) => applyEdgeChanges(edgeChanges, currentEdges)),
           [],
         )}
         onNodeClick={React.useCallback(
-          (clickEvent, clickedNode) => {
+          (_clickEvent: React.MouseEvent, clickedNode: ExpandableNode) => {
             setNodes((currentNodes) =>
               currentNodes.map((currentNode) =>
                 currentNode.id === clickedNode.id
@@ -358,6 +387,7 @@ function createExampleScope() {
   }
 }
 function ExpandCollapseCanvas() {
+  // 惰性保存组件类型，使普通重渲染沿用同一份图状态；工作台重置时重新挂载。
   const [Example] = React.useState(createExampleScope)
   return <Example />
 }

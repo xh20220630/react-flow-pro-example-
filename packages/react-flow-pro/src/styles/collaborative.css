@@ -4541,3 +4541,14 @@
     filter: blur(var(--tw-exit-blur, 0));
   }
 }
+
+.rf-pro-example[data-example='collaborative'] .collaboration-status {
+  margin-left: auto;
+  padding: 0 12px;
+  color: #438d57;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.rf-pro-example[data-example='collaborative'] .collaboration-status:not([data-status='connected']) {
+  color: #b7791f;
+}

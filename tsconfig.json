@@ -2,12 +2,18 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "lib": ["DOM", "DOM.Iterable", "ESNext"],
-    "allowJs": true,
-    "checkJs": false,
+    "allowJs": false,
     "jsx": "react-jsx",
     "incremental": true,
-    "plugins": [{ "name": "next" }],
-    "paths": { "@/*": ["./src/*"] }
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "allowImportingTsExtensions": true
   },
   "include": [
     "next-env.d.ts",
@@ -15,7 +21,9 @@
     "src/**/*.tsx",
     "next.config.ts",
     ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts"
+    ".next/dev/types/**/*.ts",
+    "playwright.config.ts",
+    "tests/**/*.ts"
   ],
   "exclude": ["node_modules"]
 }
