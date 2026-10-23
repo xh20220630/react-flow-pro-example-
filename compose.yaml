@@ -1,0 +1,18 @@
+name: react-flow-pro-example
+
+services:
+  app:
+    image: react-flow-pro-example:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - '${BIND_ADDRESS:-0.0.0.0}:${APP_PORT:-3000}:3000'
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 15s
+    logging:
+      driver: local
+      options:
+        max-size: '10m'
+        max-file: '3'
